@@ -5,7 +5,7 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler, Cont
 
 # === Настройки через переменные окружения ===
 TOKEN = os.environ["8377153990:AAFy4pG_UH109pgfxe_TGAiXTB6waKyU7YE"]         # токен бота от BotFather
-BASE_URL = os.environ["BASE_URL"]                # домен Render, например https://mybot.onrender.com
+BASE_URL = os.environ["BASE_URL=https://telegram-queue-bot-98zw.onrender.com"]                # домен Render, например https://mybot.onrender.com
 PORT = int(os.environ.get("PORT", 10000))        # Render сам подставляет PORT
 
 DATA_FILE = "queues.json"
