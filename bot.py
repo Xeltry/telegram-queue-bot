@@ -1,9 +1,7 @@
 import os
 import json
 import logging
-import asyncio
-import httpx
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Bot
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 from dotenv import load_dotenv
 
@@ -140,37 +138,32 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         await query.edit_message_text(new_text, reply_markup=coffee_keyboard())
 
-# === УСТАНОВКА WEBHOOK ===
-async def set_webhook():
+# === ЗАПУСК ТОЛЬКО WEBHOOK ===
+def main():
+    # Удаляем старый webhook
+    bot = Bot(TOKEN)
+    bot.delete_webhook()
+    logger.info("🗑 Старый webhook удалён")
+
+    # Ставим новый webhook
     webhook_url = f"{BASE_URL}/{TOKEN}"
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(
-            f"https://api.telegram.org/bot{TOKEN}/setWebhook",
-            params={"url": webhook_url}
-        )
-    if resp.status_code == 200 and resp.json().get("ok"):
-        logger.info(f"✅ Webhook установлен: {webhook_url}")
-    else:
-        logger.error(f"❌ Ошибка установки webhook: {resp.text}")
+    bot.set_webhook(url=webhook_url)
+    logger.info(f"✅ Webhook установлен: {webhook_url}")
 
-# === ЗАПУСК ===
-async def main():
-    await set_webhook()
-
+    # Запускаем приложение
     app = Application.builder().token(TOKEN).build()
-
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("addmilk", add_milk))
     app.add_handler(CommandHandler("addcoffee", add_coffee))
     app.add_handler(CallbackQueryHandler(button_handler))
 
-    logger.info("Запуск в режиме webhook")
-    await app.run_webhook(
+    logger.info("🚀 Запуск в режиме webhook")
+    app.run_webhook(
         listen="0.0.0.0",
         port=PORT,
         url_path=TOKEN,
-        webhook_url=f"{BASE_URL}/{TOKEN}"
+        webhook_url=webhook_url
     )
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
