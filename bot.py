@@ -1,29 +1,37 @@
 import os
 import json
+import logging
 import asyncio
+import httpx
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 from dotenv import load_dotenv
 
-# Загружаем переменные окружения
-load_dotenv()
+# === ЛОГИРОВАНИЕ ===
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
 
+# === ЗАГРУЗКА ПЕРЕМЕННЫХ ОКРУЖЕНИЯ ===
+load_dotenv()
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 BASE_URL = os.getenv("BASE_URL")
 PORT = int(os.getenv("PORT", 10000))
 DATA_FILE = "queues.json"
 
 if not TOKEN or not BASE_URL:
-    raise RuntimeError("❌ Не заданы TELEGRAM_BOT_TOKEN или BASE_URL в переменных окружения!")
+    raise RuntimeError("❌ TELEGRAM_BOT_TOKEN и BASE_URL должны быть заданы в переменных окружения!")
 
-# ===== Работа с данными =====
+# === РАБОТА С ДАННЫМИ ===
 def load_data():
     if os.path.exists(DATA_FILE):
         try:
             with open(DATA_FILE, "r", encoding="utf-8") as f:
                 return json.load(f)
         except json.JSONDecodeError:
-            pass
+            logger.warning("⚠️ Файл данных повреждён, создаю новый.")
     return {"milk_queue": [], "coffee_queue": [], "milk_index": 0, "coffee_index": 0}
 
 def save_data(data):
@@ -49,11 +57,15 @@ def milk_keyboard():
 def coffee_keyboard():
     return InlineKeyboardMarkup([[InlineKeyboardButton("Почистил(а) ☕", callback_data="coffee_done")]])
 
-# ===== Обработчики команд =====
+# === ОБРАБОТЧИКИ ===
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info(f"/start от {update.effective_user.id}")
+    await update.message.reply_text("Привет! Это бот очередей. Вот текущая ситуация:")
+
     data = load_data()
     milk_text = format_queue(data["milk_queue"], data["milk_index"], "🥛 Очередь на молоко")
     coffee_text = format_queue(data["coffee_queue"], data["coffee_index"], "☕ Очередь на кофемашину")
+
     await update.message.reply_text(milk_text, reply_markup=milk_keyboard())
     await update.message.reply_text(coffee_text, reply_markup=coffee_keyboard())
 
@@ -85,22 +97,17 @@ async def add_coffee(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("Вы уже в очереди на кофемашину.")
 
-# ===== Обработчик кнопок =====
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = load_data()
-
-    if not query.from_user.username:
-        await query.answer("У вас не установлен @username в Telegram.", show_alert=True)
-        return
 
     if query.data == "milk_done":
         if not data["milk_queue"]:
             await query.answer("Очередь пуста.")
             return
         current = data["milk_queue"][data["milk_index"]]
-        if query.from_user.username != current["username"].lstrip("@"):
+        if query.from_user.id != current["id"]:
             await query.answer("Сейчас не ваша очередь!", show_alert=True)
             return
         done_mention = current["mention"]
@@ -119,7 +126,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer("Очередь пуста.")
             return
         current = data["coffee_queue"][data["coffee_index"]]
-        if query.from_user.username != current["username"].lstrip("@"):
+        if query.from_user.id != current["id"]:
             await query.answer("Сейчас не ваша очередь!", show_alert=True)
             return
         done_mention = current["mention"]
@@ -133,8 +140,23 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         await query.edit_message_text(new_text, reply_markup=coffee_keyboard())
 
-# ===== Запуск бота =====
+# === УСТАНОВКА WEBHOOK ===
+async def set_webhook():
+    webhook_url = f"{BASE_URL}/{TOKEN}"
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            f"https://api.telegram.org/bot{TOKEN}/setWebhook",
+            params={"url": webhook_url}
+        )
+    if resp.status_code == 200 and resp.json().get("ok"):
+        logger.info(f"✅ Webhook установлен: {webhook_url}")
+    else:
+        logger.error(f"❌ Ошибка установки webhook: {resp.text}")
+
+# === ЗАПУСК ===
 async def main():
+    await set_webhook()
+
     app = Application.builder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
@@ -142,7 +164,7 @@ async def main():
     app.add_handler(CommandHandler("addcoffee", add_coffee))
     app.add_handler(CallbackQueryHandler(button_handler))
 
-    # Запуск в режиме webhook (Render)
+    logger.info("Запуск в режиме webhook")
     await app.run_webhook(
         listen="0.0.0.0",
         port=PORT,
