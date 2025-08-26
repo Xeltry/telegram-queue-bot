@@ -1,4 +1,3 @@
-
 import os
 import json
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -63,11 +62,10 @@ def coffee_keyboard():
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     data = get_chat_data(chat_id)
-    
+
     milk_text = format_queue(data["milk_queue"], data["milk_index"], "🥛 Очередь на молоко")
     coffee_text = format_queue(data["coffee_queue"], data["coffee_index"], "☕ Очередь на кофемашину")
 
-    # Молоко
     if data["milk_msg_id"]:
         await context.bot.edit_message_text(milk_text, chat_id=chat_id, message_id=data["milk_msg_id"],
                                             reply_markup=milk_keyboard())
@@ -75,7 +73,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg = await update.message.reply_text(milk_text, reply_markup=milk_keyboard())
         data["milk_msg_id"] = msg.message_id
 
-    # Кофе
     if data["coffee_msg_id"]:
         await context.bot.edit_message_text(coffee_text, chat_id=chat_id, message_id=data["coffee_msg_id"],
                                             reply_markup=coffee_keyboard())
@@ -84,6 +81,36 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         data["coffee_msg_id"] = msg.message_id
 
     update_chat_data(chat_id, data)
+
+async def add_milk(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    data = get_chat_data(chat_id)
+    user = update.effective_user
+    if user.id not in [p["id"] for p in data["milk_queue"]]:
+        data["milk_queue"].append({
+            "id": user.id,
+            "mention": mention(user),
+            "username": f"@{user.username}" if user.username else ""
+        })
+        update_chat_data(chat_id, data)
+        await update.message.reply_text("✅ Вы добавлены в очередь на молоко.")
+    else:
+        await update.message.reply_text("Вы уже в очереди на молоко.")
+
+async def add_coffee(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    data = get_chat_data(chat_id)
+    user = update.effective_user
+    if user.id not in [p["id"] for p in data["coffee_queue"]]:
+        data["coffee_queue"].append({
+            "id": user.id,
+            "mention": mention(user),
+            "username": f"@{user.username}" if user.username else ""
+        })
+        update_chat_data(chat_id, data)
+        await update.message.reply_text("✅ Вы добавлены в очередь на кофемашину.")
+    else:
+        await update.message.reply_text("Вы уже в очереди на кофемашину.")
 
 # ===== Обработка кнопок =====
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -99,13 +126,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if query.from_user.id != current["id"]:
             await query.answer("Сейчас не ваша очередь!", show_alert=True)
             return
-
         data["milk_index"] = (data["milk_index"] + 1) % len(data["milk_queue"])
         update_chat_data(chat_id, data)
-
         next_user = data["milk_queue"][data["milk_index"]]["mention"]
-        milk_text = format_queue(data["milk_queue"], data["milk_index"], "🥛 Очередь на молоко")
-        milk_text += f"\n\n➡️ Сейчас: {next_user}"
+        milk_text = format_queue(data["milk_queue"], data["milk_index"], "🥛 Очередь на молоко") + f"\n\n➡️ Сейчас: {next_user}"
         await context.bot.edit_message_text(milk_text, chat_id=chat_id, message_id=data["milk_msg_id"],
                                             reply_markup=milk_keyboard())
 
@@ -117,13 +141,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if query.from_user.id != current["id"]:
             await query.answer("Сейчас не ваша очередь!", show_alert=True)
             return
-
         data["coffee_index"] = (data["coffee_index"] + 1) % len(data["coffee_queue"])
         update_chat_data(chat_id, data)
-
         next_user = data["coffee_queue"][data["coffee_index"]]["mention"]
-        coffee_text = format_queue(data["coffee_queue"], data["coffee_index"], "☕ Очередь на кофемашину")
-        coffee_text += f"\n\n➡️ Сейчас: {next_user}"
+        coffee_text = format_queue(data["coffee_queue"], data["coffee_index"], "☕ Очередь на кофемашину") + f"\n\n➡️ Сейчас: {next_user}"
         await context.bot.edit_message_text(coffee_text, chat_id=chat_id, message_id=data["coffee_msg_id"],
                                             reply_markup=coffee_keyboard())
 
@@ -133,10 +154,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("addmilk", add_milk))
+    app.add_handler(CommandHandler("addcoffee", add_coffee))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.run_webhook(listen="0.0.0.0", port=PORT,
                     url_path=TOKEN, webhook_url=f"{BASE_URL}/{TOKEN}")
 
 if __name__ == "__main__":
     main()
-    
