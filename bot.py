@@ -9,7 +9,7 @@ PORT = int(os.getenv("PORT", 10000))
 DATA_FILE = "queues.json"
 
 # ===== Работа с данными =====
-def load_data():
+def load_all():
     if os.path.exists(DATA_FILE):
         try:
             with open(DATA_FILE, "r", encoding="utf-8") as f:
@@ -18,15 +18,15 @@ def load_data():
             pass
     return {}
 
-def save_data(data):
+def save_all(all_data):
     with open(DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+        json.dump(all_data, f, ensure_ascii=False, indent=2)
 
 def get_chat_data(chat_id):
-    data = load_data()
+    all_data = load_all()
     cid = str(chat_id)
-    if cid not in data:
-        data[cid] = {
+    if cid not in all_data:
+        all_data[cid] = {
             "milk_queue": [],
             "coffee_queue": [],
             "milk_index": 0,
@@ -34,13 +34,13 @@ def get_chat_data(chat_id):
             "milk_msg_id": None,
             "coffee_msg_id": None
         }
-        save_data(data)
-    return data[cid]
+        save_all(all_data)
+    return all_data[cid]
 
 def update_chat_data(chat_id, chat_data):
-    data = load_data()
-    data[str(chat_id)] = chat_data
-    save_data(data)
+    all_data = load_all()
+    all_data[str(chat_id)] = chat_data
+    save_all(all_data)
 
 # ===== Вспомогательные =====
 def mention(user):
@@ -90,10 +90,12 @@ async def add_milk(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     chat_data = get_chat_data(chat_id)
     user = update.effective_user
+
     if user.id not in [p["id"] for p in chat_data["milk_queue"]]:
         chat_data["milk_queue"].append({"id": user.id, "mention": mention(user)})
         update_chat_data(chat_id, chat_data)
         await update.message.reply_text("✅ Вы добавлены в очередь на молоко.")
+        await refresh_messages(context, chat_id, chat_data)  # обновляем главное сообщение
     else:
         await update.message.reply_text("Вы уже в очереди на молоко.")
 
@@ -101,12 +103,27 @@ async def add_coffee(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     chat_data = get_chat_data(chat_id)
     user = update.effective_user
+
     if user.id not in [p["id"] for p in chat_data["coffee_queue"]]:
         chat_data["coffee_queue"].append({"id": user.id, "mention": mention(user)})
         update_chat_data(chat_id, chat_data)
         await update.message.reply_text("✅ Вы добавлены в очередь на кофемашину.")
+        await refresh_messages(context, chat_id, chat_data)
     else:
         await update.message.reply_text("Вы уже в очереди на кофемашину.")
+
+# ===== Вспомогательное обновление =====
+async def refresh_messages(context, chat_id, chat_data):
+    """Редактирует оба главных сообщения в чате."""
+    milk_text = format_queue(chat_data["milk_queue"], chat_data["milk_index"], "🥛 Очередь на молоко")
+    coffee_text = format_queue(chat_data["coffee_queue"], chat_data["coffee_index"], "☕ Очередь на кофемашину")
+
+    if chat_data["milk_msg_id"]:
+        await context.bot.edit_message_text(milk_text, chat_id=chat_id, message_id=chat_data["milk_msg_id"],
+                                            reply_markup=milk_keyboard())
+    if chat_data["coffee_msg_id"]:
+        await context.bot.edit_message_text(coffee_text, chat_id=chat_id, message_id=chat_data["coffee_msg_id"],
+                                            reply_markup=coffee_keyboard())
 
 # ===== Обработка кнопок =====
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
