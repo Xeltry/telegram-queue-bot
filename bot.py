@@ -24,14 +24,18 @@ def save_data(data):
 
 def get_chat_data(chat_id):
     data = load_data()
-    if str(chat_id) not in data:
-        data[str(chat_id)] = {
-            "milk_queue": [], "coffee_queue": [],
-            "milk_index": 0, "coffee_index": 0,
-            "milk_msg_id": None, "coffee_msg_id": None
+    cid = str(chat_id)
+    if cid not in data:
+        data[cid] = {
+            "milk_queue": [],
+            "coffee_queue": [],
+            "milk_index": 0,
+            "coffee_index": 0,
+            "milk_msg_id": None,
+            "coffee_msg_id": None
         }
         save_data(data)
-    return data
+    return data[cid]
 
 def update_chat_data(chat_id, chat_data):
     data = load_data()
@@ -61,53 +65,45 @@ def coffee_keyboard():
 # ===== Команды =====
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    data = get_chat_data(chat_id)
+    chat_data = get_chat_data(chat_id)
 
-    milk_text = format_queue(data["milk_queue"], data["milk_index"], "🥛 Очередь на молоко")
-    coffee_text = format_queue(data["coffee_queue"], data["coffee_index"], "☕ Очередь на кофемашину")
+    milk_text = format_queue(chat_data["milk_queue"], chat_data["milk_index"], "🥛 Очередь на молоко")
+    coffee_text = format_queue(chat_data["coffee_queue"], chat_data["coffee_index"], "☕ Очередь на кофемашину")
 
-    if data["milk_msg_id"]:
-        await context.bot.edit_message_text(milk_text, chat_id=chat_id, message_id=data["milk_msg_id"],
+    if chat_data["milk_msg_id"]:
+        await context.bot.edit_message_text(milk_text, chat_id=chat_id, message_id=chat_data["milk_msg_id"],
                                             reply_markup=milk_keyboard())
     else:
         msg = await update.message.reply_text(milk_text, reply_markup=milk_keyboard())
-        data["milk_msg_id"] = msg.message_id
+        chat_data["milk_msg_id"] = msg.message_id
 
-    if data["coffee_msg_id"]:
-        await context.bot.edit_message_text(coffee_text, chat_id=chat_id, message_id=data["coffee_msg_id"],
+    if chat_data["coffee_msg_id"]:
+        await context.bot.edit_message_text(coffee_text, chat_id=chat_id, message_id=chat_data["coffee_msg_id"],
                                             reply_markup=coffee_keyboard())
     else:
         msg = await update.message.reply_text(coffee_text, reply_markup=coffee_keyboard())
-        data["coffee_msg_id"] = msg.message_id
+        chat_data["coffee_msg_id"] = msg.message_id
 
-    update_chat_data(chat_id, data)
+    update_chat_data(chat_id, chat_data)
 
 async def add_milk(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    data = get_chat_data(chat_id)
+    chat_data = get_chat_data(chat_id)
     user = update.effective_user
-    if user.id not in [p["id"] for p in data["milk_queue"]]:
-        data["milk_queue"].append({
-            "id": user.id,
-            "mention": mention(user),
-            "username": f"@{user.username}" if user.username else ""
-        })
-        update_chat_data(chat_id, data)
+    if user.id not in [p["id"] for p in chat_data["milk_queue"]]:
+        chat_data["milk_queue"].append({"id": user.id, "mention": mention(user)})
+        update_chat_data(chat_id, chat_data)
         await update.message.reply_text("✅ Вы добавлены в очередь на молоко.")
     else:
         await update.message.reply_text("Вы уже в очереди на молоко.")
 
 async def add_coffee(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    data = get_chat_data(chat_id)
+    chat_data = get_chat_data(chat_id)
     user = update.effective_user
-    if user.id not in [p["id"] for p in data["coffee_queue"]]:
-        data["coffee_queue"].append({
-            "id": user.id,
-            "mention": mention(user),
-            "username": f"@{user.username}" if user.username else ""
-        })
-        update_chat_data(chat_id, data)
+    if user.id not in [p["id"] for p in chat_data["coffee_queue"]]:
+        chat_data["coffee_queue"].append({"id": user.id, "mention": mention(user)})
+        update_chat_data(chat_id, chat_data)
         await update.message.reply_text("✅ Вы добавлены в очередь на кофемашину.")
     else:
         await update.message.reply_text("Вы уже в очереди на кофемашину.")
@@ -116,36 +112,40 @@ async def add_coffee(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     chat_id = query.message.chat.id
-    data = get_chat_data(chat_id)
+    chat_data = get_chat_data(chat_id)
 
     if query.data == "milk_done":
-        if not data["milk_queue"]:
+        if not chat_data["milk_queue"]:
             await query.answer("Очередь пуста.")
             return
-        current = data["milk_queue"][data["milk_index"]]
+        current = chat_data["milk_queue"][chat_data["milk_index"]]
         if query.from_user.id != current["id"]:
             await query.answer("Сейчас не ваша очередь!", show_alert=True)
             return
-        data["milk_index"] = (data["milk_index"] + 1) % len(data["milk_queue"])
-        update_chat_data(chat_id, data)
-        next_user = data["milk_queue"][data["milk_index"]]["mention"]
-        milk_text = format_queue(data["milk_queue"], data["milk_index"], "🥛 Очередь на молоко") + f"\n\n➡️ Сейчас: {next_user}"
-        await context.bot.edit_message_text(milk_text, chat_id=chat_id, message_id=data["milk_msg_id"],
+
+        chat_data["milk_index"] = (chat_data["milk_index"] + 1) % len(chat_data["milk_queue"])
+        update_chat_data(chat_id, chat_data)
+
+        next_user = chat_data["milk_queue"][chat_data["milk_index"]]["mention"]
+        milk_text = format_queue(chat_data["milk_queue"], chat_data["milk_index"], "🥛 Очередь на молоко") + f"\n\n➡️ Сейчас: {next_user}"
+        await context.bot.edit_message_text(milk_text, chat_id=chat_id, message_id=chat_data["milk_msg_id"],
                                             reply_markup=milk_keyboard())
 
     elif query.data == "coffee_done":
-        if not data["coffee_queue"]:
+        if not chat_data["coffee_queue"]:
             await query.answer("Очередь пуста.")
             return
-        current = data["coffee_queue"][data["coffee_index"]]
+        current = chat_data["coffee_queue"][chat_data["coffee_index"]]
         if query.from_user.id != current["id"]:
             await query.answer("Сейчас не ваша очередь!", show_alert=True)
             return
-        data["coffee_index"] = (data["coffee_index"] + 1) % len(data["coffee_queue"])
-        update_chat_data(chat_id, data)
-        next_user = data["coffee_queue"][data["coffee_index"]]["mention"]
-        coffee_text = format_queue(data["coffee_queue"], data["coffee_index"], "☕ Очередь на кофемашину") + f"\n\n➡️ Сейчас: {next_user}"
-        await context.bot.edit_message_text(coffee_text, chat_id=chat_id, message_id=data["coffee_msg_id"],
+
+        chat_data["coffee_index"] = (chat_data["coffee_index"] + 1) % len(chat_data["coffee_queue"])
+        update_chat_data(chat_id, chat_data)
+
+        next_user = chat_data["coffee_queue"][chat_data["coffee_index"]]["mention"]
+        coffee_text = format_queue(chat_data["coffee_queue"], chat_data["coffee_index"], "☕ Очередь на кофемашину") + f"\n\n➡️ Сейчас: {next_user}"
+        await context.bot.edit_message_text(coffee_text, chat_id=chat_id, message_id=chat_data["coffee_msg_id"],
                                             reply_markup=coffee_keyboard())
 
     await query.answer()
