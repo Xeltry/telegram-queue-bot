@@ -197,5 +197,4 @@ def main():
                     url_path=TOKEN, webhook_url=f"{BASE_URL}/{TOKEN}")
 
 if __name__ == "__main__":
-    main()                      + f"\n\n➡️ Сейчас: {next_user}"
-        await context.bot.edit_message_text(coffee_text, chat_id=chat_id,
+    main()
