@@ -2,7 +2,6 @@ import os
 import json
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
-from telegram.helpers import mention_html
 from telegram.constants import ParseMode
 
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -10,22 +9,23 @@ BASE_URL = os.getenv("BASE_URL")
 PORT = int(os.getenv("PORT", 10000))
 DATA_FILE = "queues.json"
 
+
 # ===== Работа с данными =====
-def load_all():
+def load_data():
     if os.path.exists(DATA_FILE):
         try:
             with open(DATA_FILE, "r", encoding="utf-8") as f:
                 return json.load(f)
         except json.JSONDecodeError:
             pass
-    return {}
+    return {}  # ключ: chat_id -> {milk_queue, coffee_queue,...}
 
-def save_all(all_data):
+def save_data(data):
     with open(DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump(all_data, f, ensure_ascii=False, indent=2)
+        json.dump(data, f, ensure_ascii=False, indent=2)
 
 def get_chat_data(chat_id):
-    all_data = load_all()
+    all_data = load_data()
     cid = str(chat_id)
     if cid not in all_data:
         all_data[cid] = {
@@ -36,155 +36,148 @@ def get_chat_data(chat_id):
             "milk_msg_id": None,
             "coffee_msg_id": None
         }
-        save_all(all_data)
+        save_data(all_data)
     return all_data[cid]
 
 def update_chat_data(chat_id, chat_data):
-    all_data = load_all()
+    all_data = load_data()
     all_data[str(chat_id)] = chat_data
-    save_all(all_data)
+    save_data(all_data)
 
-# ===== Вспомогательные =====
-def mention_name(user):
-    return user.first_name
 
+# ===== Форматирование =====
 def format_queue(queue, index, title):
     if not queue:
         return f"{title}\n— очередь пуста."
     lines = [title]
     for offset in range(len(queue)):
         i = (index + offset) % len(queue)
-        marker = "→ сейчас" if offset == 0 else ""
-        lines.append(f"{offset+1}. {queue[i]['name']} {marker}".rstrip())
+        mark = "→ сейчас" if offset == 0 else ""
+        lines.append(f"{offset+1}. {queue[i]['mention']} {mark}".rstrip())
     return "\n".join(lines)
 
 def milk_keyboard():
-    return InlineKeyboardMarkup([[InlineKeyboardButton("Купил(а) 🥛", callback_data="milk_done")]])
+    return InlineKeyboardMarkup([[InlineKeyboardButton("✅ Купил(а) 🥛", callback_data="milk_done")]])
 
 def coffee_keyboard():
-    return InlineKeyboardMarkup([[InlineKeyboardButton("Почистил(а) ☕", callback_data="coffee_done")]])
+    return InlineKeyboardMarkup([[InlineKeyboardButton("✅ Почистил(а) ☕", callback_data="coffee_done")]])
 
-# ===== Обновление сообщений =====
+
+# ===== Обновление закрепов =====
 async def refresh_messages(context, chat_id, chat_data):
-    milk_text = format_queue(chat_data["milk_queue"], chat_data["milk_index"], "🥛 Очередь на молоко")
-    coffee_text = format_queue(chat_data["coffee_queue"], chat_data["coffee_index"], "☕ Очередь на кофемашину")
-
     if chat_data["milk_msg_id"]:
-        await context.bot.edit_message_text(milk_text, chat_id=chat_id,
-                                            message_id=chat_data["milk_msg_id"],
-                                            reply_markup=milk_keyboard(),
-                                            parse_mode=ParseMode.HTML)
+        await context.bot.edit_message_text(
+            format_queue(chat_data["milk_queue"], chat_data["milk_index"], "🥛 Очередь на молоко"),
+            chat_id=chat_id, message_id=chat_data["milk_msg_id"],
+            reply_markup=milk_keyboard()
+        )
     if chat_data["coffee_msg_id"]:
-        await context.bot.edit_message_text(coffee_text, chat_id=chat_id,
-                                            message_id=chat_data["coffee_msg_id"],
-                                            reply_markup=coffee_keyboard(),
-                                            parse_mode=ParseMode.HTML)
+        await context.bot.edit_message_text(
+            format_queue(chat_data["coffee_queue"], chat_data["coffee_index"], "☕ Очередь на кофемашину"),
+            chat_id=chat_id, message_id=chat_data["coffee_msg_id"],
+            reply_markup=coffee_keyboard()
+        )
+
 
 # ===== Команды =====
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    chat_data = get_chat_data(chat_id)
+    data = get_chat_data(chat_id)
 
-    milk_text = format_queue(chat_data["milk_queue"], chat_data["milk_index"], "🥛 Очередь на молоко")
-    coffee_text = format_queue(chat_data["coffee_queue"], chat_data["coffee_index"], "☕ Очередь на кофемашину")
+    milk_text = format_queue(data["milk_queue"], data["milk_index"], "🥛 Очередь на молоко")
+    coffee_text = format_queue(data["coffee_queue"], data["coffee_index"], "☕ Очередь на кофемашину")
 
-    if chat_data["milk_msg_id"]:
-        await context.bot.edit_message_text(milk_text, chat_id=chat_id,
-                                            message_id=chat_data["milk_msg_id"],
-                                            reply_markup=milk_keyboard(),
-                                            parse_mode=ParseMode.HTML)
+    if data["milk_msg_id"]:
+        await context.bot.edit_message_text(milk_text, chat_id=chat_id, message_id=data["milk_msg_id"],
+                                            reply_markup=milk_keyboard())
     else:
-        msg = await update.message.reply_text(milk_text, reply_markup=milk_keyboard(), parse_mode=ParseMode.HTML)
-        chat_data["milk_msg_id"] = msg.message_id
+        msg = await update.message.reply_text(milk_text, reply_markup=milk_keyboard())
+        await context.bot.pin_chat_message(chat_id=chat_id, message_id=msg.message_id)
+        data["milk_msg_id"] = msg.message_id
 
-    if chat_data["coffee_msg_id"]:
-        await context.bot.edit_message_text(coffee_text, chat_id=chat_id,
-                                            message_id=chat_data["coffee_msg_id"],
-                                            reply_markup=coffee_keyboard(),
-                                            parse_mode=ParseMode.HTML)
+    if data["coffee_msg_id"]:
+        await context.bot.edit_message_text(coffee_text, chat_id=chat_id, message_id=data["coffee_msg_id"],
+                                            reply_markup=coffee_keyboard())
     else:
-        msg = await update.message.reply_text(coffee_text, reply_markup=coffee_keyboard(), parse_mode=ParseMode.HTML)
-        chat_data["coffee_msg_id"] = msg.message_id
+        msg = await update.message.reply_text(coffee_text, reply_markup=coffee_keyboard())
+        await context.bot.pin_chat_message(chat_id=chat_id, message_id=msg.message_id)
+        data["coffee_msg_id"] = msg.message_id
 
-    update_chat_data(chat_id, chat_data)
+    update_chat_data(chat_id, data)
+
 
 async def add_milk(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    chat_data = get_chat_data(chat_id)
+    data = get_chat_data(chat_id)
     user = update.effective_user
 
-    if user.id not in [p["id"] for p in chat_data["milk_queue"]]:
-        chat_data["milk_queue"].append({"id": user.id, "name": mention_name(user)})
-        update_chat_data(chat_id, chat_data)
+    if user.id not in [p["id"] for p in data["milk_queue"]]:
+        mention = f"@{user.username}" if user.username else user.first_name
+        data["milk_queue"].append({"id": user.id, "mention": mention})
+        update_chat_data(chat_id, data)
         await update.message.reply_text("✅ Вы добавлены в очередь на молоко.")
-        await refresh_messages(context, chat_id, chat_data)
+        await refresh_messages(context, chat_id, data)
     else:
         await update.message.reply_text("Вы уже в очереди на молоко.")
 
+
 async def add_coffee(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    chat_data = get_chat_data(chat_id)
+    data = get_chat_data(chat_id)
     user = update.effective_user
 
-    if user.id not in [p["id"] for p in chat_data["coffee_queue"]]:
-        chat_data["coffee_queue"].append({"id": user.id, "name": mention_name(user)})
-        update_chat_data(chat_id, chat_data)
+    if user.id not in [p["id"] for p in data["coffee_queue"]]:
+        mention = f"@{user.username}" if user.username else user.first_name
+        data["coffee_queue"].append({"id": user.id, "mention": mention})
+        update_chat_data(chat_id, data)
         await update.message.reply_text("✅ Вы добавлены в очередь на кофемашину.")
-        await refresh_messages(context, chat_id, chat_data)
+        await refresh_messages(context, chat_id, data)
     else:
         await update.message.reply_text("Вы уже в очереди на кофемашину.")
+
 
 # ===== Обработка кнопок =====
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     chat_id = query.message.chat.id
-    chat_data = get_chat_data(chat_id)
+    data = get_chat_data(chat_id)
 
     if query.data == "milk_done":
-        if not chat_data["milk_queue"]:
+        if not data["milk_queue"]:
             await query.answer("Очередь пуста.")
             return
-        current = chat_data["milk_queue"][chat_data["milk_index"]]
-        if query.from_user.id != current["id"]:
+        if query.from_user.id != data["milk_queue"][data["milk_index"]]["id"]:
             await query.answer("Сейчас не ваша очередь!", show_alert=True)
             return
 
-        chat_data["milk_index"] = (chat_data["milk_index"] + 1) % len(chat_data["milk_queue"])
-        update_chat_data(chat_id, chat_data)
+        data["milk_index"] = (data["milk_index"] + 1) % len(data["milk_queue"])
+        update_chat_data(chat_id, data)
+        await refresh_messages(context, chat_id, data)
 
-        next_user_data = chat_data["milk_queue"][chat_data["milk_index"]]
-        next_user_tag = mention_html(next_user_data["id"], next_user_data["name"])
-        milk_text = format_queue(chat_data["milk_queue"], chat_data["milk_index"], "🥛 Очередь на молоко") \
-                    + f"\n\n➡️ Сейчас: {next_user_tag}"
-
-        await context.bot.edit_message_text(milk_text, chat_id=chat_id,
-                                            message_id=chat_data["milk_msg_id"],
-                                            reply_markup=milk_keyboard(),
-                                            parse_mode=ParseMode.HTML)
+        next_user = data["milk_queue"][data["milk_index"]]
+        await context.bot.send_message(chat_id=chat_id,
+                                       text=f"➡️ {next_user['mention']}, теперь ваша очередь на 🥛",
+                                       parse_mode=ParseMode.HTML)
 
     elif query.data == "coffee_done":
-        if not chat_data["coffee_queue"]:
+        if not data["coffee_queue"]:
             await query.answer("Очередь пуста.")
             return
-        current = chat_data["coffee_queue"][chat_data["coffee_index"]]
-        if query.from_user.id != current["id"]:
+        if query.from_user.id != data["coffee_queue"][data["coffee_index"]]["id"]:
             await query.answer("Сейчас не ваша очередь!", show_alert=True)
             return
 
-        chat_data["coffee_index"] = (chat_data["coffee_index"] + 1) % len(chat_data["coffee_queue"])
-        update_chat_data(chat_id, chat_data)
+        data["coffee_index"] = (data["coffee_index"] + 1) % len(data["coffee_queue"])
+        update_chat_data(chat_id, data)
+        await refresh_messages(context, chat_id, data)
 
-        next_user_data = chat_data["coffee_queue"][chat_data["coffee_index"]]
-        next_user_tag = mention_html(next_user_data["id"], next_user_data["name"])
-        coffee_text = format_queue(chat_data["coffee_queue"], chat_data["coffee_index"], "☕ Очередь на кофемашину") \
-                      + f"\n\n➡️ Сейчас: {next_user_tag}"
-
-        await context.bot.edit_message_text(coffee_text, chat_id=chat_id,
-                                            message_id=chat_data["coffee_msg_id"],
-                                            reply_markup=coffee_keyboard(),
-                                            parse_mode=ParseMode.HTML)
+        next_user = data["coffee_queue"][data["coffee_index"]]
+        await context.bot.send_message(chat_id=chat_id,
+                                       text=f"➡️ {next_user['mention']}, теперь ваша очередь на ☕",
+                                       parse_mode=ParseMode.HTML)
 
     await query.answer()
+
 
 # ===== Запуск =====
 def main():
