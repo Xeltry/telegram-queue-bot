@@ -3,12 +3,12 @@ import json
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 from telegram.constants import ParseMode
+from telegram.error import BadRequest
 
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 BASE_URL = os.getenv("BASE_URL")
 PORT = int(os.getenv("PORT", 10000))
 DATA_FILE = "queues.json"
-
 
 # ===== Работа с данными =====
 def load_data():
@@ -18,7 +18,7 @@ def load_data():
                 return json.load(f)
         except json.JSONDecodeError:
             pass
-    return {}  # ключ: chat_id -> {milk_queue, coffee_queue,...}
+    return {}
 
 def save_data(data):
     with open(DATA_FILE, "w", encoding="utf-8") as f:
@@ -44,16 +44,15 @@ def update_chat_data(chat_id, chat_data):
     all_data[str(chat_id)] = chat_data
     save_data(all_data)
 
-
-# ===== Форматирование =====
+# ===== Вспомогательные =====
 def format_queue(queue, index, title):
     if not queue:
         return f"{title}\n— очередь пуста."
     lines = [title]
     for offset in range(len(queue)):
         i = (index + offset) % len(queue)
-        mark = "→ сейчас" if offset == 0 else ""
-        lines.append(f"{offset+1}. {queue[i]['mention']} {mark}".rstrip())
+        marker = "→ сейчас" if offset == 0 else ""
+        lines.append(f"{offset+1}. {queue[i]['mention']} {marker}".rstrip())
     return "\n".join(lines)
 
 def milk_keyboard():
@@ -62,22 +61,32 @@ def milk_keyboard():
 def coffee_keyboard():
     return InlineKeyboardMarkup([[InlineKeyboardButton("✅ Почистил(а) ☕", callback_data="coffee_done")]])
 
+async def safe_edit(bot, chat_id, msg_id, new_text, keyboard):
+    """Редактирует сообщение, игнорируя 'Message is not modified'."""
+    try:
+        await bot.edit_message_text(
+            new_text,
+            chat_id=chat_id,
+            message_id=msg_id,
+            reply_markup=keyboard,
+            parse_mode=ParseMode.HTML
+        )
+    except BadRequest as e:
+        if "Message is not modified" in str(e):
+            return
+        else:
+            raise
 
 # ===== Обновление закрепов =====
 async def refresh_messages(context, chat_id, chat_data):
     if chat_data["milk_msg_id"]:
-        await context.bot.edit_message_text(
-            format_queue(chat_data["milk_queue"], chat_data["milk_index"], "🥛 Очередь на молоко"),
-            chat_id=chat_id, message_id=chat_data["milk_msg_id"],
-            reply_markup=milk_keyboard()
-        )
+        await safe_edit(context.bot, chat_id, chat_data["milk_msg_id"],
+                        format_queue(chat_data["milk_queue"], chat_data["milk_index"], "🥛 Очередь на молоко"),
+                        milk_keyboard())
     if chat_data["coffee_msg_id"]:
-        await context.bot.edit_message_text(
-            format_queue(chat_data["coffee_queue"], chat_data["coffee_index"], "☕ Очередь на кофемашину"),
-            chat_id=chat_id, message_id=chat_data["coffee_msg_id"],
-            reply_markup=coffee_keyboard()
-        )
-
+        await safe_edit(context.bot, chat_id, chat_data["coffee_msg_id"],
+                        format_queue(chat_data["coffee_queue"], chat_data["coffee_index"], "☕ Очередь на кофемашину"),
+                        coffee_keyboard())
 
 # ===== Команды =====
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -88,23 +97,18 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     coffee_text = format_queue(data["coffee_queue"], data["coffee_index"], "☕ Очередь на кофемашину")
 
     if data["milk_msg_id"]:
-        await context.bot.edit_message_text(milk_text, chat_id=chat_id, message_id=data["milk_msg_id"],
-                                            reply_markup=milk_keyboard())
+        await safe_edit(context.bot, chat_id, data["milk_msg_id"], milk_text, milk_keyboard())
     else:
         msg = await update.message.reply_text(milk_text, reply_markup=milk_keyboard())
-        await context.bot.pin_chat_message(chat_id=chat_id, message_id=msg.message_id)
         data["milk_msg_id"] = msg.message_id
 
     if data["coffee_msg_id"]:
-        await context.bot.edit_message_text(coffee_text, chat_id=chat_id, message_id=data["coffee_msg_id"],
-                                            reply_markup=coffee_keyboard())
+        await safe_edit(context.bot, chat_id, data["coffee_msg_id"], coffee_text, coffee_keyboard())
     else:
         msg = await update.message.reply_text(coffee_text, reply_markup=coffee_keyboard())
-        await context.bot.pin_chat_message(chat_id=chat_id, message_id=msg.message_id)
         data["coffee_msg_id"] = msg.message_id
 
     update_chat_data(chat_id, data)
-
 
 async def add_milk(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
@@ -120,7 +124,6 @@ async def add_milk(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("Вы уже в очереди на молоко.")
 
-
 async def add_coffee(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     data = get_chat_data(chat_id)
@@ -134,7 +137,6 @@ async def add_coffee(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await refresh_messages(context, chat_id, data)
     else:
         await update.message.reply_text("Вы уже в очереди на кофемашину.")
-
 
 # ===== Обработка кнопок =====
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -177,7 +179,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                        parse_mode=ParseMode.HTML)
 
     await query.answer()
-
 
 # ===== Запуск =====
 def main():
