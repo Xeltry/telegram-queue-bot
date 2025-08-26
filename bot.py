@@ -1,41 +1,32 @@
 import os
 import json
-import logging
-from dotenv import load_dotenv
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Bot
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
-# === ЛОГИРОВАНИЕ ===
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO
-)
-logger = logging.getLogger(__name__)
-
-# === ЗАГРУЗКА ПЕРЕМЕННЫХ ОКРУЖЕНИЯ ===
-load_dotenv()
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 BASE_URL = os.getenv("BASE_URL")
 PORT = int(os.getenv("PORT", 10000))
 DATA_FILE = "queues.json"
 
-if not TOKEN or not BASE_URL:
-    raise RuntimeError("❌ TELEGRAM_BOT_TOKEN и BASE_URL должны быть заданы в переменных окружения!")
-
-# === РАБОТА С ДАННЫМИ ===
+# === Данные ===
 def load_data():
     if os.path.exists(DATA_FILE):
         try:
             with open(DATA_FILE, "r", encoding="utf-8") as f:
                 return json.load(f)
         except json.JSONDecodeError:
-            logger.warning("⚠️ Файл данных повреждён, создаю новый.")
-    return {"milk_queue": [], "coffee_queue": [], "milk_index": 0, "coffee_index": 0}
+            pass
+    return {
+        "milk_queue": [], "coffee_queue": [],
+        "milk_index": 0, "coffee_index": 0,
+        "milk_msg_id": None, "coffee_msg_id": None
+    }
 
 def save_data(data):
     with open(DATA_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
+# === Вспомогательные ===
 def mention(user):
     return f"@{user.username}" if user.username else user.first_name
 
@@ -55,49 +46,40 @@ def milk_keyboard():
 def coffee_keyboard():
     return InlineKeyboardMarkup([[InlineKeyboardButton("Почистил(а) ☕", callback_data="coffee_done")]])
 
-# === ОБРАБОТЧИКИ ===
+# === Команды ===
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    logger.info(f"/start от {update.effective_user.id}")
-    await update.message.reply_text("Привет! Это бот очередей. Вот текущая ситуация:")
-
+    chat_id = update.effective_chat.id
     data = load_data()
+
     milk_text = format_queue(data["milk_queue"], data["milk_index"], "🥛 Очередь на молоко")
     coffee_text = format_queue(data["coffee_queue"], data["coffee_index"], "☕ Очередь на кофемашину")
 
-    await update.message.reply_text(milk_text, reply_markup=milk_keyboard())
-    await update.message.reply_text(coffee_text, reply_markup=coffee_keyboard())
-
-async def add_milk(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    data = load_data()
-    user = update.effective_user
-    if user.id not in [p["id"] for p in data["milk_queue"]]:
-        data["milk_queue"].append({
-            "id": user.id,
-            "mention": mention(user),
-            "username": f"@{user.username}" if user.username else ""
-        })
-        save_data(data)
-        await update.message.reply_text("✅ Вы добавлены в очередь на молоко.")
+    # Сообщение молока
+    if data["milk_msg_id"]:
+        await context.bot.edit_message_text(
+            milk_text, chat_id=chat_id, message_id=data["milk_msg_id"],
+            reply_markup=milk_keyboard()
+        )
     else:
-        await update.message.reply_text("Вы уже в очереди на молоко.")
+        msg = await update.message.reply_text(milk_text, reply_markup=milk_keyboard())
+        data["milk_msg_id"] = msg.message_id
 
-async def add_coffee(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    data = load_data()
-    user = update.effective_user
-    if user.id not in [p["id"] for p in data["coffee_queue"]]:
-        data["coffee_queue"].append({
-            "id": user.id,
-            "mention": mention(user),
-            "username": f"@{user.username}" if user.username else ""
-        })
-        save_data(data)
-        await update.message.reply_text("✅ Вы добавлены в очередь на кофемашину.")
+    # Сообщение кофе
+    if data["coffee_msg_id"]:
+        await context.bot.edit_message_text(
+            coffee_text, chat_id=chat_id, message_id=data["coffee_msg_id"],
+            reply_markup=coffee_keyboard()
+        )
     else:
-        await update.message.reply_text("Вы уже в очереди на кофемашину.")
+        msg = await update.message.reply_text(coffee_text, reply_markup=coffee_keyboard())
+        data["coffee_msg_id"] = msg.message_id
 
+    save_data(data)
+
+# === Обработка кнопок ===
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
+    chat_id = query.message.chat.id
     data = load_data()
 
     if query.data == "milk_done":
@@ -108,16 +90,17 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if query.from_user.id != current["id"]:
             await query.answer("Сейчас не ваша очередь!", show_alert=True)
             return
-        done_mention = current["mention"]
+
         data["milk_index"] = (data["milk_index"] + 1) % len(data["milk_queue"])
-        next_mention = data["milk_queue"][data["milk_index"]]["mention"]
         save_data(data)
-        new_text = (
-            f"✅ {done_mention} купил(а) молоко.\n"
-            f"Следующий: {next_mention}\n\n"
-            + format_queue(data["milk_queue"], data["milk_index"], "🥛 Очередь на молоко")
+
+        next_user = data["milk_queue"][data["milk_index"]]["mention"]
+        milk_text = format_queue(data["milk_queue"], data["milk_index"], "🥛 Очередь на молоко")
+        milk_text += f"\n\n➡️ Сейчас: {next_user}"
+        await context.bot.edit_message_text(
+            milk_text, chat_id=chat_id, message_id=data["milk_msg_id"],
+            reply_markup=milk_keyboard()
         )
-        await query.edit_message_text(new_text, reply_markup=milk_keyboard())
 
     elif query.data == "coffee_done":
         if not data["coffee_queue"]:
@@ -127,45 +110,29 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if query.from_user.id != current["id"]:
             await query.answer("Сейчас не ваша очередь!", show_alert=True)
             return
-        done_mention = current["mention"]
+
         data["coffee_index"] = (data["coffee_index"] + 1) % len(data["coffee_queue"])
-        next_mention = data["coffee_queue"][data["coffee_index"]]["mention"]
         save_data(data)
-        new_text = (
-            f"✅ {done_mention} почистил(а) кофемашину.\n"
-            f"Следующий: {next_mention}\n\n"
-            + format_queue(data["coffee_queue"], data["coffee_index"], "☕ Очередь на кофемашину")
+
+        next_user = data["coffee_queue"][data["coffee_index"]]["mention"]
+        coffee_text = format_queue(data["coffee_queue"], data["coffee_index"], "☕ Очередь на кофемашину")
+        coffee_text += f"\n\n➡️ Сейчас: {next_user}"
+        await context.bot.edit_message_text(
+            coffee_text, chat_id=chat_id, message_id=data["coffee_msg_id"],
+            reply_markup=coffee_keyboard()
         )
-        await query.edit_message_text(new_text, reply_markup=coffee_keyboard())
 
-# === ЗАПУСК ТОЛЬКО WEBHOOK ===
-async def main():
-    bot = Bot(TOKEN)
+    await query.answer()
 
-    # Удаляем старый webhook
-    await bot.delete_webhook()
-    logger.info("🗑 Старый webhook удалён")
-
-    # Ставим новый webhook
-    webhook_url = f"{BASE_URL}/{TOKEN}"
-    await bot.set_webhook(url=webhook_url)
-    logger.info(f"✅ Webhook установлен: {webhook_url}")
-
-    # Создаём приложение
+# === Запуск ===
+def main():
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("addmilk", add_milk))
-    app.add_handler(CommandHandler("addcoffee", add_coffee))
     app.add_handler(CallbackQueryHandler(button_handler))
-
-    logger.info("🚀 Запуск в режиме webhook")
-    await app.run_webhook(
-        listen="0.0.0.0",
-        port=PORT,
-        url_path=TOKEN,
-        webhook_url=webhook_url
+    app.run_webhook(
+        listen="0.0.0.0", port=PORT,
+        url_path=TOKEN, webhook_url=f"{BASE_URL}/{TOKEN}"
     )
 
 if __name__ == "__main__":
-    import asyncio
-    asyncio.run(main())
+    main()
