@@ -1,4 +1,9 @@
-python-telegram-bot==20.7
+# Web framework
 fastapi==0.115.0
 uvicorn[standard]==0.30.6
+
+# Telegram bot
+python-telegram-bot==20.7
+
+# Timezones
 pytz==2024.2
