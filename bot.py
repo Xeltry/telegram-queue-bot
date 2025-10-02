@@ -4,7 +4,7 @@ from fastapi import FastAPI, Request, HTTPException
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
 from telegram.constants import ParseMode
 from telegram.error import BadRequest
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes, MessageHandler, filters
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters
 
 # ====== Логирование ======
 logging.basicConfig(level=logging.INFO)
@@ -27,8 +27,11 @@ MAIN_KEYBOARD = ReplyKeyboardMarkup(
     resize_keyboard=True
 )
 
-def milk_keyboard():   return InlineKeyboardMarkup([[InlineKeyboardButton("✅ Купил(а) 🥛", callback_data="milk_done")]])
-def coffee_keyboard(): return InlineKeyboardMarkup([[InlineKeyboardButton("✅ Почистил(а) ☕", callback_data="coffee_done")]])
+def milk_keyboard():
+    return InlineKeyboardMarkup([[InlineKeyboardButton("✅ Купил(а) 🥛", callback_data="milk_done")]])
+
+def coffee_keyboard():
+    return InlineKeyboardMarkup([[InlineKeyboardButton("✅ Почистил(а) ☕", callback_data="coffee_done")]])
 
 # ====== Фразы ======
 with open(PHRASES_FILE, encoding="utf-8") as f:
@@ -49,14 +52,22 @@ QUEUE_CONFIG = {
 }
 
 # ====== Работа с файлами ======
-def _sync_load(): 
+def _sync_load():
     if os.path.exists(DATA_FILE):
-        try: return json.load(open(DATA_FILE, encoding="utf-8"))
-        except json.JSONDecodeError: logger.warning("JSON повреждён")
+        try:
+            return json.load(open(DATA_FILE, encoding="utf-8"))
+        except json.JSONDecodeError:
+            logger.warning("JSON повреждён")
     return {}
-def _sync_save(data): json.dump(data, open(DATA_FILE, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
-async def load(): return await asyncio.to_thread(_sync_load)
-async def save(d): await asyncio.to_thread(_sync_save, d)
+
+def _sync_save(data):
+    json.dump(data, open(DATA_FILE, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+
+async def load():
+    return await asyncio.to_thread(_sync_load)
+
+async def save(d):
+    await asyncio.to_thread(_sync_save, d)
 
 async def get_chat(chat_id):
     async with file_lock:
@@ -64,7 +75,7 @@ async def get_chat(chat_id):
         cid = str(chat_id)
         if cid not in all_data:
             all_data[cid] = {c["queue"]: [] for c in QUEUE_CONFIG.values()}
-            for k in ["milk_index","coffee_index","milk_msg_id","coffee_msg_id"]: 
+            for k in ["milk_index", "coffee_index", "milk_msg_id", "coffee_msg_id"]:
                 all_data[cid][k] = 0 if "index" in k else None
             await save(all_data)
         return all_data[cid]
@@ -78,13 +89,20 @@ async def update_chat(chat_id, data):
 # ====== Утилиты ======
 async def safe_edit(bot, chat_id, msg_id, text, kb):
     try:
-        await bot.edit_message_text(text=text, chat_id=chat_id, message_id=msg_id,
-                                    reply_markup=kb, parse_mode=ParseMode.HTML)
+        await bot.edit_message_text(
+            text=text,
+            chat_id=chat_id,
+            message_id=msg_id,
+            reply_markup=kb,
+            parse_mode=ParseMode.HTML
+        )
     except BadRequest as e:
-        if "not modified" not in str(e): logger.error("safe_edit: %s", e)
+        if "not modified" not in str(e):
+            logger.error("safe_edit: %s", e)
 
 def format_queue(queue, index, title):
-    if not queue: return f"<b>{title}</b>\n— очередь пуста."
+    if not queue:
+        return f"<b>{title}</b>\n— очередь пуста."
     lines = [f"<b>{title}</b>"]
     for off in range(len(queue)):
         i = (index + off) % len(queue)
@@ -102,8 +120,11 @@ async def add_to(update, context, kind):
         await update_chat(chat_id, data)
         await update.message.reply_text(f"✅ Вы добавлены в {cfg['title']}", reply_markup=MAIN_KEYBOARD)
         if data[cfg["msg_id"]]:
-            await safe_edit(context.bot, chat_id, data[cfg["msg_id"]],
-                            format_queue(data[cfg["queue"]], data[cfg["index"]], cfg["title"]), cfg["keyboard"]())
+            await safe_edit(
+                context.bot, chat_id, data[cfg["msg_id"]],
+                format_queue(data[cfg["queue"]], data[cfg["index"]], cfg["title"]),
+                cfg["keyboard"]()
+            )
     else:
         await update.message.reply_text(f"Вы уже в {cfg['title']}", reply_markup=MAIN_KEYBOARD)
 
@@ -116,31 +137,40 @@ async def remove_from(update, context, kind):
         await update_chat(chat_id, data)
         await update.message.reply_text(f"❌ Вы удалены из {cfg['title']}", reply_markup=MAIN_KEYBOARD)
         if data[cfg["msg_id"]]:
-            await safe_edit(context.bot, chat_id, data[cfg["msg_id"]],
-                            format_queue(data[cfg["queue"]], data[cfg["index"]], cfg["title"]), cfg["keyboard"]())
+            await safe_edit(
+                context.bot, chat_id, data[cfg["msg_id"]],
+                format_queue(data[cfg["queue"]], data[cfg["index"]], cfg["title"]),
+                cfg["keyboard"]()
+            )
     else:
         await update.message.reply_text(f"Вас нет в {cfg['title']}", reply_markup=MAIN_KEYBOARD)
 
 async def show_queue(update, context, kind):
     cfg, chat_id = QUEUE_CONFIG[kind], update.effective_chat.id
     data = await get_chat(chat_id)
-    msg = await update.message.reply_text(format_queue(data[cfg["queue"]], data[cfg["index"]], cfg["title"]),
-                                          reply_markup=MAIN_KEYBOARD)
+    msg = await update.message.reply_text(
+        format_queue(data[cfg["queue"]], data[cfg["index"]], cfg["title"]),
+        reply_markup=MAIN_KEYBOARD
+    )
     data[cfg["msg_id"]] = msg.message_id
     await update_chat(chat_id, data)
 
 async def handle_done(query, context, kind):
     cfg, chat_id = QUEUE_CONFIG[kind], query.message.chat.id
     data = await get_chat(chat_id)
-    if not data[cfg["queue"]]: return await query.answer("Очередь пуста.")
+    if not data[cfg["queue"]]:
+        return await query.answer("Очередь пуста.")
     current = data[cfg["queue"]][data[cfg["index"]]]
     if query.from_user.id != current["id"]:
         return await query.answer("Сейчас не ваша очередь!", show_alert=True)
     data[cfg["index"]] = (data[cfg["index"]] + 1) % len(data[cfg["queue"]])
     await update_chat(chat_id, data)
     if data[cfg["msg_id"]]:
-        await safe_edit(context.bot, chat_id, data[cfg["msg_id"]],
-                        format_queue(data[cfg["queue"]], data[cfg["index"]], cfg["title"]), cfg["keyboard"]())
+        await safe_edit(
+            context.bot, chat_id, data[cfg["msg_id"]],
+            format_queue(data[cfg["queue"]], data[cfg["index"]], cfg["title"]),
+            cfg["keyboard"]()
+        )
     next_user = data[cfg["queue"]][data[cfg["index"]]]
     doer = f"@{query.from_user.username}" if query.from_user.username else query.from_user.first_name
     phrase = random.choice(cfg["phrases"]).format(doer=doer, next=next_user["mention"])
@@ -148,18 +178,18 @@ async def handle_done(query, context, kind):
     await query.answer()
 
 # ====== Handlers ======
-async def start(update, context): 
+async def start(update, context):
     await update.message.reply_text("Привет! Выберите действие:", reply_markup=MAIN_KEYBOARD)
 
-async def help_cmd(update, context): 
+async def help_cmd(update, context):
     await update.message.reply_text("/addmilk /addcoffee /removemilk /removecoffee /milk /coffee")
 
 CALLBACK_MAP = {"milk_done": "milk", "coffee_done": "coffee"}
 TEXT_MAP = {
-    "Купил кофе": lambda u,c: add_to(u,c,"milk"),
-    "Почистил кофемашину": lambda u,c: add_to(u,c,"coffee"),
-    "Уйти из очереди молока": lambda u,c: remove_from(u,c,"milk"),
-    "Уйти из очереди кофе": lambda u,c: remove_from(u,c,"coffee"),
+    "Купил кофе": lambda u, c: add_to(u, c, "milk"),
+    "Почистил кофемашину": lambda u, c: add_to(u, c, "coffee"),
+    "Уйти из очереди молока": lambda u, c: remove_from(u, c, "milk"),
+    "Уйти из очереди кофе": lambda u, c: remove_from(u, c, "coffee"),
 }
 
 async def button_handler(update, context):
@@ -167,6 +197,7 @@ async def button_handler(update, context):
     if kind:
         await handle_done(update.callback_query, context, kind)
 
+# ====== Обработчик текстовых кнопок ======
 async def text_button_handler(update, context):
     handler = TEXT_MAP.get(update.message.text)
     if handler:
@@ -179,12 +210,12 @@ application = Application.builder().token(TOKEN).build()
 # Регистрация команд
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CommandHandler("help", help_cmd))
-application.add_handler(CommandHandler("addmilk", lambda u,c: add_to(u,c,"milk")))
-application.add_handler(CommandHandler("addcoffee", lambda u,c: add_to(u,c,"coffee")))
-application.add_handler(CommandHandler("removemilk", lambda u,c: remove_from(u,c,"milk")))
-application.add_handler(CommandHandler("removecoffee", lambda u,c: remove_from(u,c,"coffee")))
-application.add_handler(CommandHandler("milk", lambda u,c: show_queue(u,c,"milk")))
-application.add_handler(CommandHandler("coffee", lambda u,c: show_queue(u,c,"coffee")))
+application.add_handler(CommandHandler("addmilk", lambda u, c: add_to(u, c, "milk")))
+application.add_handler(CommandHandler("addcoffee", lambda u, c: add_to(u, c, "coffee")))
+application.add_handler(CommandHandler("removemilk", lambda u, c: remove_from(u, c, "milk")))
+application.add_handler(CommandHandler("removecoffee", lambda u, c: remove_from(u, c, "coffee")))
+application.add_handler(CommandHandler("milk", lambda u, c: show_queue(u, c, "milk")))
+application.add_handler(CommandHandler("coffee", lambda u, c: show_queue(u, c, "coffee")))
 
 # Callback и текстовые кнопки
 application.add_handler(CallbackQueryHandler(button_handler))
@@ -195,15 +226,16 @@ application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_but
 async def on_startup():
     await application.initialize()
     await application.startup()
-    await application.bot.set_webhook(f"{BASE_URL}/webhook/{TOKEN}")
-    logger.info("Webhook установлен: %s/webhook/%s", BASE_URL, TOKEN)
+    webhook_url = f"{BASE_URL}/webhook"
+    await application.bot.set_webhook(webhook_url)
+    logger.info("Webhook установлен: %s", webhook_url)
 
 @app.on_event("shutdown")
 async def on_shutdown():
     await application.shutdown()
     await application.stop()
 
-@app.post(f"/webhook/{TOKEN}")
+@app.post("/webhook")
 async def webhook(req: Request):
     try:
         payload = await req.json()
@@ -217,10 +249,8 @@ async def webhook(req: Request):
 async def health():
     return {"status": "ok"}
 
+# ====== Запуск локально ======
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", 8000))
     uvicorn.run("bot:app", host="0.0.0.0", port=port)
-
-
-
