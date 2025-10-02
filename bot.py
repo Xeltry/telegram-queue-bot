@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 # ====== Проверка окружения ======
 TOKEN    = os.getenv("8377153990:AAFy4pG_UH109pgfxe_TGAiXTB6waKyU7YE")
-BASE_URL = os.getenv("https://telegram-queue-bot-98zw.onrender.com")
+BASE_URL = os.getenv("https://telegram-queue-bot-zv80.onrender.com")
 if not TOKEN or not BASE_URL:
     raise RuntimeError("Не заданы TELEGRAM_BOT_TOKEN или BASE_URL")
 
@@ -319,3 +319,4 @@ async def health():
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("bot:app", host="0.0.0.0", port=int(os.getenv("PORT", 8000)))
+
