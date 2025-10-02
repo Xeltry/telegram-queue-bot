@@ -3,7 +3,7 @@ import json
 import random
 import logging
 import asyncio
-from datetime import time
+from datetime import datetime
 
 import pytz
 from fastapi import FastAPI, Request, HTTPException
@@ -29,23 +29,29 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # ====== Проверка окружения ======
-TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-BASE_URL = os.getenv("BASE_URL")
+TOKEN    = os.getenv("TELEGRAM_BOT_TOKEN")
+BASE_URL = os.getenv("BASE_URL")  # например, https://your.domain.com
 if not TOKEN or not BASE_URL:
     raise RuntimeError("Не заданы TELEGRAM_BOT_TOKEN или BASE_URL")
 
-# ====== Конфигурация ======
+# ====== Константы и файлы ======
 DATA_FILE     = "queues.json"
 PHRASES_FILE  = "phrases.json"
 MINSK_TZ      = pytz.timezone("Europe/Minsk")
 file_lock     = asyncio.Lock()
 
-# ====== Постоянная клавиатура ======
+# ====== Клавиатуры ======
 MAIN_KEYBOARD = ReplyKeyboardMarkup(
     [["Купил кофе", "Почистил кофемашину"]],
     resize_keyboard=True,
     one_time_keyboard=False,
 )
+
+def milk_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[InlineKeyboardButton("✅ Купил(а) 🥛", callback_data="milk_done")]])
+
+def coffee_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[InlineKeyboardButton("✅ Почистил(а) ☕", callback_data="coffee_done")]])
 
 # ====== Загрузка фраз ======
 with open(PHRASES_FILE, encoding="utf-8") as f:
@@ -53,14 +59,14 @@ with open(PHRASES_FILE, encoding="utf-8") as f:
 milk_phrases   = phrases.get("milk_phrases", [])
 coffee_phrases = phrases.get("coffee_phrases", [])
 
-# ====== Файловый ввод-вывод через to_thread ======
+# ====== Синхронный ввод-вывод ======
 def _sync_load_data() -> dict:
     if os.path.exists(DATA_FILE):
         try:
             with open(DATA_FILE, "r", encoding="utf-8") as f:
                 return json.load(f)
         except json.JSONDecodeError:
-            logger.warning("Ошибка чтения JSON, создаём новый файл")
+            logger.warning("JSON повреждён, создаём новый файл")
     return {}
 
 def _sync_save_data(data: dict) -> None:
@@ -73,6 +79,7 @@ async def load_data() -> dict:
 async def save_data(data: dict) -> None:
     await asyncio.to_thread(_sync_save_data, data)
 
+# ====== Работа с данными чата ======
 async def get_chat_data(chat_id: int) -> dict:
     async with file_lock:
         all_data = await load_data()
@@ -93,12 +100,6 @@ async def update_chat_data(chat_id: int, chat_data: dict) -> None:
         await save_data(all_data)
 
 # ====== Утилиты ======
-def milk_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([[InlineKeyboardButton("✅ Купил(а) 🥛", callback_data="milk_done")]])
-
-def coffee_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([[InlineKeyboardButton("✅ Почистил(а) ☕", callback_data="coffee_done")]])
-
 async def safe_edit(bot, chat_id: int, msg_id: int, new_text: str, keyboard: InlineKeyboardMarkup):
     try:
         await bot.edit_message_text(
@@ -115,18 +116,24 @@ async def safe_edit(bot, chat_id: int, msg_id: int, new_text: str, keyboard: Inl
 
 def format_queue(queue: list, index: int, title: str) -> str:
     if not queue:
-        return f"{title}\n— очередь пуста."
-    lines = [title]
+        return f"<b>{title}</b>\n— очередь пуста."
+    lines = [f"<b>{title}</b>"]
     for offset in range(len(queue)):
         i      = (index + offset) % len(queue)
-        marker = "→ сейчас" if offset == 0 else ""
-        lines.append(f"{offset+1}. {queue[i]['mention']} {marker}".rstrip())
+        marker = " ← сейчас" if offset == 0 else ""
+        lines.append(f"{offset+1}. {queue[i]['mention']}{marker}")
     return "\n".join(lines)
 
-# ====== Общие хендлеры для очередей ======
-async def add_to_queue(update: Update, context: ContextTypes.DEFAULT_TYPE,
-                       queue_name: str, msg_key: str, index_key: str,
-                       title: str, keyboard_func):
+# ====== Добавление в очередь ======
+async def add_to_queue(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    queue_name: str,
+    msg_key: str,
+    idx_key: str,
+    title: str,
+    keyboard_func
+):
     chat_id = update.effective_chat.id
     data    = await get_chat_data(chat_id)
     user    = update.effective_user
@@ -137,22 +144,31 @@ async def add_to_queue(update: Update, context: ContextTypes.DEFAULT_TYPE,
         await update_chat_data(chat_id, data)
 
         await update.message.reply_text(
-            f"✅ Вы добавлены в {title.lower()}",
+            f"✅ Вы добавлены в очередь «{title}»",
             reply_markup=MAIN_KEYBOARD
         )
         if data[msg_key]:
-            await safe_edit(context.bot, chat_id, data[msg_key],
-                            format_queue(data[queue_name], data[index_key], title),
-                            keyboard_func())
+            await safe_edit(
+                context.bot, chat_id, data[msg_key],
+                format_queue(data[queue_name], data[idx_key], title),
+                keyboard_func()
+            )
     else:
         await update.message.reply_text(
-            f"Вы уже в {title.lower()}",
+            f"Вы уже в очереди «{title}»",
             reply_markup=MAIN_KEYBOARD
         )
 
-async def remove_from_queue(update: Update, context: ContextTypes.DEFAULT_TYPE,
-                            queue_name: str, msg_key: str, index_key: str,
-                            title: str, keyboard_func):
+# ====== Удаление из очереди ======
+async def remove_from_queue(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    queue_name: str,
+    msg_key: str,
+    index_key: str,
+    title: str,
+    keyboard_func
+):
     chat_id = update.effective_chat.id
     data    = await get_chat_data(chat_id)
     user    = update.effective_user
@@ -162,22 +178,32 @@ async def remove_from_queue(update: Update, context: ContextTypes.DEFAULT_TYPE,
     if len(data[queue_name]) < before:
         await update_chat_data(chat_id, data)
         await update.message.reply_text(
-            f"❌ Вы удалены из {title.lower()}",
+            f"❌ Вы удалены из очереди «{title}»",
             reply_markup=MAIN_KEYBOARD
         )
         if data[msg_key]:
-            await safe_edit(context.bot, chat_id, data[msg_key],
-                            format_queue(data[queue_name], data[index_key], title),
-                            keyboard_func())
+            await safe_edit(
+                context.bot, chat_id, data[msg_key],
+                format_queue(data[queue_name], data[index_key], title),
+                keyboard_func()
+            )
     else:
         await update.message.reply_text(
-            f"Вас нет в {title.lower()}",
+            f"Вас нет в очереди «{title}»",
             reply_markup=MAIN_KEYBOARD
         )
 
-async def handle_done(query, context: ContextTypes.DEFAULT_TYPE,
-                      queue_name: str, msg_key: str, index_key: str,
-                      title: str, keyboard_func, phrases: list):
+# ====== Обработка нажатия «Готово» ======
+async def handle_done(
+    query,
+    context: ContextTypes.DEFAULT_TYPE,
+    queue_name: str,
+    msg_key: str,
+    index_key: str,
+    title: str,
+    keyboard_func,
+    phrases: list
+):
     chat_id = query.message.chat.id
     data    = await get_chat_data(chat_id)
 
@@ -194,22 +220,25 @@ async def handle_done(query, context: ContextTypes.DEFAULT_TYPE,
     await update_chat_data(chat_id, data)
 
     if data[msg_key]:
-        await safe_edit(context.bot, chat_id, data[msg_key],
-                        format_queue(data[queue_name], data[index_key], title),
-                        keyboard_func())
+        await safe_edit(
+            context.bot, chat_id, data[msg_key],
+            format_queue(data[queue_name], data[index_key], title),
+            keyboard_func()
+        )
 
     next_user = data[queue_name][data[index_key]]
     doer      = f"@{query.from_user.username}" if query.from_user.username else query.from_user.first_name
     phrase    = random.choice(phrases).format(doer=doer, next=next_user["mention"])
     await context.bot.send_message(
-        chat_id, phrase,
+        chat_id,
+        phrase,
         parse_mode=ParseMode.HTML,
         reply_markup=MAIN_KEYBOARD
     )
     await query.answer()
 
-# ====== Хендлеры команд ======
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ====== Telegram-хендлеры ======
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Привет! Выберите действие ниже:",
         reply_markup=MAIN_KEYBOARD
@@ -232,24 +261,32 @@ async def show_coffee(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update_chat_data(chat_id, data)
 
 async def add_milk(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await add_to_queue(update, context,
-                       "milk_queue", "milk_msg_id", "milk_index",
-                       "🥛 очередь на молоко", milk_keyboard)
+    await add_to_queue(
+        update, context,
+        "milk_queue", "milk_msg_id", "milk_index",
+        "🥛 очередь на молоко", milk_keyboard
+    )
 
 async def add_coffee(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await add_to_queue(update, context,
-                       "coffee_queue", "coffee_msg_id", "coffee_index",
-                       "☕ очередь на кофемашину", coffee_keyboard)
+    await add_to_queue(
+        update, context,
+        "coffee_queue", "coffee_msg_id", "coffee_index",
+        "☕ очередь на кофемашину", coffee_keyboard
+    )
 
 async def remove_milk(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await remove_from_queue(update, context,
-                            "milk_queue", "milk_msg_id", "milk_index",
-                            "🥛 очередь на молоко", milk_keyboard)
+    await remove_from_queue(
+        update, context,
+        "milk_queue", "milk_msg_id", "milk_index",
+        "🥛 очередь на молоко", milk_keyboard
+    )
 
 async def remove_coffee(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await remove_from_queue(update, context,
-                            "coffee_queue", "coffee_msg_id", "coffee_index",
-                            "☕ очередь на кофемашину", coffee_keyboard)
+    await remove_from_queue(
+        update, context,
+        "coffee_queue", "coffee_msg_id", "coffee_index",
+        "☕ очередь на кофемашину", coffee_keyboard
+    )
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
@@ -265,32 +302,51 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     if query.data == "milk_done":
-        await handle_done(query, context,
-                          "milk_queue", "milk_msg_id", "milk_index",
-                          "🥛 очередь на молоко", milk_keyboard, milk_phrases)
+        await handle_done(
+            query, context,
+            "milk_queue", "milk_msg_id", "milk_index",
+            "🥛 очередь на молоко", milk_keyboard, milk_phrases
+        )
     elif query.data == "coffee_done":
-        await handle_done(query, context,
-                          "coffee_queue", "coffee_msg_id", "coffee_index",
-                          "☕ очередь на кофемашину", coffee_keyboard, coffee_phrases)
+        await handle_done(
+            query, context,
+            "coffee_queue", "coffee_msg_id", "coffee_index",
+            "☕ очередь на кофемашину", coffee_keyboard, coffee_phrases
+        )
 
-# ====== FastAPI + Webhook ======
+# ====== Перенаправление текстовых кнопок ======
+async def text_button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    if text == "Купил кофе":
+        await add_coffee(update, context)
+    elif text == "Почистил кофемашину":
+        await add_milk(update, context)
+    elif text == "Уйти из очереди молока":
+        await remove_milk(update, context)
+    elif text == "Уйти из очереди кофе":
+        await remove_coffee(update, context)
+
+# ====== Инициализация FastAPI и Telegram Application ======
 app = FastAPI()
 application = Application.builder().token(TOKEN).build()
 
+# Регистрация команд и хендлеров
 for cmd, handler in [
-    ("start", start),
-    ("help",  help_command),
-    ("addmilk", add_milk),
-    ("addcoffee", add_coffee),
-    ("removemilk", remove_milk),
-    ("removecoffee", remove_coffee),
-    ("milk", show_milk),
-    ("coffee", show_coffee),
+    ("start",    start_command),
+    ("help",     help_command),
+    ("addmilk",  add_milk),
+    ("addcoffee",add_coffee),
+    ("removemilk",remove_milk),
+    ("removecoffee",remove_coffee),
+    ("milk",     show_milk),
+    ("coffee",   show_coffee),
 ]:
     application.add_handler(CommandHandler(cmd, handler))
 
 application.add_handler(CallbackQueryHandler(button_handler))
+application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_button_handler))
 
+# ====== Webhook ======
 @app.on_event("startup")
 async def on_startup():
     await application.initialize()
@@ -318,6 +374,5 @@ async def health():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("bot:app", host="0.0.0.0", port=int(os.getenv("PORT", 8000)))
-
-
+    port = int(os.getenv("PORT", 8000))
+    uvicorn.run("bot:app", host="0.0.0.0", port=port)
