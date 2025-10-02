@@ -23,7 +23,7 @@ file_lock = asyncio.Lock()
 
 # ====== Клавиатура ======
 MAIN_KEYBOARD = ReplyKeyboardMarkup(
-    [["Купил(а) молоко", "Почистил(а) кофемашину"]],
+    [["Купил(а) 🥛", "Почистил(а) ☕"]],
     resize_keyboard=True
 )
 
@@ -41,12 +41,12 @@ with open(PHRASES_FILE, encoding="utf-8") as f:
 QUEUE_CONFIG = {
     "milk": {
         "queue": "milk_queue", "msg_id": "milk_msg_id", "index": "milk_index",
-        "title": "🥛 очередь на молоко", "keyboard": milk_keyboard,
+        "title": "🥛 очередь", "keyboard": milk_keyboard,
         "phrases": phrases.get("milk_phrases", [])
     },
     "coffee": {
         "queue": "coffee_queue", "msg_id": "coffee_msg_id", "index": "coffee_index",
-        "title": "☕ очередь на кофемашину", "keyboard": coffee_keyboard,
+        "title": "☕ очередь", "keyboard": coffee_keyboard,
         "phrases": phrases.get("coffee_phrases", [])
     }
 }
@@ -155,39 +155,68 @@ async def show_queue(update, context, kind):
     data[cfg["msg_id"]] = msg.message_id
     await update_chat(chat_id, data)
 
-async def handle_done(query, context, kind):
-    cfg, chat_id = QUEUE_CONFIG[kind], query.message.chat.id
+async def advance_queue_from_text(update, context, kind):
+    cfg = QUEUE_CONFIG[kind]
+    chat_id = update.effective_chat.id
+    user = update.effective_user
+
     data = await get_chat(chat_id)
     if not data[cfg["queue"]]:
-        return await query.answer("Очередь пуста.")
+        await update.message.reply_text("Очередь пуста.", reply_markup=MAIN_KEYBOARD)
+        return
+
     current = data[cfg["queue"]][data[cfg["index"]]]
-    if query.from_user.id != current["id"]:
-        return await query.answer("Сейчас не ваша очередь!", show_alert=True)
+    if user.id != current["id"]:
+        await update.message.reply_text("Сейчас не ваша очередь!", reply_markup=MAIN_KEYBOARD)
+        return
+
     data[cfg["index"]] = (data[cfg["index"]] + 1) % len(data[cfg["queue"]])
     await update_chat(chat_id, data)
+
     if data[cfg["msg_id"]]:
         await safe_edit(
             context.bot, chat_id, data[cfg["msg_id"]],
             format_queue(data[cfg["queue"]], data[cfg["index"]], cfg["title"]),
             cfg["keyboard"]()
         )
+
     next_user = data[cfg["queue"]][data[cfg["index"]]]
-    doer = f"@{query.from_user.username}" if query.from_user.username else query.from_user.first_name
+    doer = f"@{user.username}" if user.username else user.first_name
     phrase = random.choice(cfg["phrases"]).format(doer=doer, next=next_user["mention"])
     await context.bot.send_message(chat_id, phrase, parse_mode=ParseMode.HTML, reply_markup=MAIN_KEYBOARD)
-    await query.answer()
+
+async def milk_done_from_button(update, context):
+    await advance_queue_from_text(update, context, "milk")
+
+async def coffee_done_from_button(update, context):
+    await advance_queue_from_text(update, context, "coffee")
 
 # ====== Handlers ======
 async def start(update, context):
     await update.message.reply_text("Привет! Выберите действие:", reply_markup=MAIN_KEYBOARD)
 
 async def help_cmd(update, context):
-    await update.message.reply_text("/addmilk /addcoffee /removemilk /removecoffee /milk /coffee")
+    help_text = (
+        "<b>Доступные команды:</b>\n\n"
+        "/start – запустить бота и показать клавиатуру\n"
+        "/help – показать это сообщение\n\n"
+        "/addmilk – добавить себя в 🥛 очередь\n"
+        "/addcoffee – добавить себя в ☕ очередь\n"
+        "/removemilk – выйти из 🥛 очереди\n"
+        "/removecoffee – выйти из ☕ очереди\n"
+        "/milk – показать 🥛 очередь\n"
+        "/coffee – показать ☕ очередь\n\n"
+        "<b>Кнопки в клавиатуре:</b>\n"
+        "• «Купил(а) 🥛» – двигает очередь молока вперёд (только если ваша очередь)\n"
+        "• «Почистил(а) ☕» – двигает очередь кофемашины вперёд (только если ваша очередь)\n"
+    )
+    await update.message.reply_text(help_text, parse_mode=ParseMode.HTML)
 
+# ====== Карты кнопок ======
 CALLBACK_MAP = {"milk_done": "milk", "coffee_done": "coffee"}
 TEXT_MAP = {
-    "Купил(а) молоко": lambda u, c: add_to(u, c, "milk"),
-    "Почистил(а) кофемашину": lambda u, c: add_to(u, c, "coffee"),
+    "Купил(а) 🥛": milk_done_from_button,
+    "Почистил(а) ☕": coffee_done_from_button,
 }
 
 async def button_handler(update, context):
@@ -203,7 +232,6 @@ async def text_button_handler(update, context):
 # ====== FastAPI + Telegram Application ======
 app = FastAPI()
 
-# ВАЖНО: отключаем Updater, чтобы не было ошибки на Python 3.13
 application = Application.builder().token(TOKEN).updater(None).build()
 
 # Регистрация команд
@@ -253,4 +281,3 @@ if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", 8000))
     uvicorn.run("bot:app", host="0.0.0.0", port=port)
-    
