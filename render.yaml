@@ -11,4 +11,5 @@ services:
       - key: TELEGRAM_BOT_TOKEN
         sync: false
       - key: BASE_URL
-        value: https://telegram-queue-bot-u1re.onrender.com
+        value: https://telegram-queue-bot-u3yl.onrender.com
+
