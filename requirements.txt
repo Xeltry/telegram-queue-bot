@@ -1,5 +1,6 @@
-python-telegram-bot>=20.7,<21
+python-telegram-bot==20.5
 fastapi==0.110.0
 uvicorn==0.29.0
 pytz==2024.1
+
 
