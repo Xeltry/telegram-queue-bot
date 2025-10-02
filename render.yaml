@@ -1,0 +1,16 @@
+# render.yaml для FastAPI-Telegram бота
+
+services:
+  - type: web
+    name: telegram-bot
+    env: python
+    region: fra       # FRA (Europe) — можно сменить на ewr (US East) или другие
+    plan: free        # бесплатный план
+    branch: main      # ветка репозитория, откуда деплоим
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn bot:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        fromSecret: 8377153990:AAFy4pG_UH109pgfxe_TGAiXTB6waKyU7YE
+      - key: BASE_URL
+        fromSecret: BASE_URL
