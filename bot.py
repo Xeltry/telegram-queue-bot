@@ -181,8 +181,11 @@ async def handle_done(query, context, kind):
 async def start(update, context):
     await update.message.reply_text("Привет! Выберите действие:", reply_markup=MAIN_KEYBOARD)
 
+# ====== Команды ======
 async def help_cmd(update, context):
-    await update.message.reply_text("/addmilk /addcoffee /removemilk /removecoffee /milk /coffee")
+    await update.message.reply_text(
+        "/addmilk /addcoffee /removemilk /removecoffee /milk /coffee"
+    )
 
 CALLBACK_MAP = {"milk_done": "milk", "coffee_done": "coffee"}
 TEXT_MAP = {
@@ -197,7 +200,6 @@ async def button_handler(update, context):
     if kind:
         await handle_done(update.callback_query, context, kind)
 
-# ====== Обработчик текстовых кнопок ======
 async def text_button_handler(update, context):
     handler = TEXT_MAP.get(update.message.text)
     if handler:
@@ -225,15 +227,15 @@ application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_but
 @app.on_event("startup")
 async def on_startup():
     await application.initialize()
-    await application.startup()
+    await application.start()
     webhook_url = f"{BASE_URL}/webhook"
     await application.bot.set_webhook(webhook_url)
     logger.info("Webhook установлен: %s", webhook_url)
 
 @app.on_event("shutdown")
 async def on_shutdown():
-    await application.shutdown()
     await application.stop()
+    await application.shutdown()
 
 @app.post("/webhook")
 async def webhook(req: Request):
@@ -254,7 +256,3 @@ if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", 8000))
     uvicorn.run("bot:app", host="0.0.0.0", port=port)
-
-
-
-
