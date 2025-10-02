@@ -21,9 +21,9 @@ DATA_FILE, PHRASES_FILE = "queues.json", "phrases.json"
 MINSK_TZ  = pytz.timezone("Europe/Minsk")
 file_lock = asyncio.Lock()
 
+# ====== Клавиатура ======
 MAIN_KEYBOARD = ReplyKeyboardMarkup(
-    [["Купил кофе", "Почистил кофемашину"],
-     ["Уйти из очереди молока", "Уйти из очереди кофе"]],
+    [["Купил(а) молоко", "Почистил(а) кофемашину"]],
     resize_keyboard=True
 )
 
@@ -186,10 +186,8 @@ async def help_cmd(update, context):
 
 CALLBACK_MAP = {"milk_done": "milk", "coffee_done": "coffee"}
 TEXT_MAP = {
-    "Купил кофе": lambda u, c: add_to(u, c, "milk"),
-    "Почистил кофемашину": lambda u, c: add_to(u, c, "coffee"),
-    "Уйти из очереди молока": lambda u, c: remove_from(u, c, "milk"),
-    "Уйти из очереди кофе": lambda u, c: remove_from(u, c, "coffee"),
+    "Купил(а) молоко": lambda u, c: add_to(u, c, "milk"),
+    "Почистил(а) кофемашину": lambda u, c: add_to(u, c, "coffee"),
 }
 
 async def button_handler(update, context):
@@ -254,4 +252,4 @@ async def health():
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", 8000))
-    uvicorn.run("bot:app", host="0.0.0.0", port=port)
+    uvicorn.run("bot:app", host="0.0.0.0", 
