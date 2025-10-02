@@ -1,16 +1,14 @@
-# render.yaml для FastAPI-Telegram бота
-
 services:
   - type: web
-    name: telegram-bot
+    name: telegram-queue-bot
     env: python
-    region: fra       # FRA (Europe) — можно сменить на ewr (US East) или другие
-    plan: free        # бесплатный план
-    branch: main      # ветка репозитория, откуда деплоим
-    buildCommand: pip install -r requirements.txt
+    plan: free
+    buildCommand: |
+      pip install --upgrade pip
+      pip install --upgrade --force-reinstall -r requirements.txt
     startCommand: uvicorn bot:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: TELEGRAM_BOT_TOKEN
-        fromSecret: TELEGRAM_BOT_TOKEN
+        sync: false
       - key: BASE_URL
-        fromSecret: BASE_URL
+        value: https://telegram-queue-bot-u1re.onrender.com
