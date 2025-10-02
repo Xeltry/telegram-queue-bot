@@ -110,7 +110,7 @@ def format_queue(queue, index, title):
         lines.append(f"{off+1}. {queue[i]['mention']}{marker}")
     return "\n".join(lines)
 
-# ====== Универсальные действия ======
+# ====== Действия ======
 async def add_to(update, context, kind):
     cfg, chat_id, user = QUEUE_CONFIG[kind], update.effective_chat.id, update.effective_user
     data = await get_chat(chat_id)
@@ -181,11 +181,8 @@ async def handle_done(query, context, kind):
 async def start(update, context):
     await update.message.reply_text("Привет! Выберите действие:", reply_markup=MAIN_KEYBOARD)
 
-# ====== Команды ======
 async def help_cmd(update, context):
-    await update.message.reply_text(
-        "/addmilk /addcoffee /removemilk /removecoffee /milk /coffee"
-    )
+    await update.message.reply_text("/addmilk /addcoffee /removemilk /removecoffee /milk /coffee")
 
 CALLBACK_MAP = {"milk_done": "milk", "coffee_done": "coffee"}
 TEXT_MAP = {
@@ -207,7 +204,9 @@ async def text_button_handler(update, context):
 
 # ====== FastAPI + Telegram Application ======
 app = FastAPI()
-application = Application.builder().token(TOKEN).build()
+
+# ВАЖНО: отключаем Updater, чтобы не было ошибки на Python 3.13
+application = Application.builder().token(TOKEN).updater(None).build()
 
 # Регистрация команд
 application.add_handler(CommandHandler("start", start))
