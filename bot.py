@@ -152,15 +152,7 @@ async def start(update, context):
     await update.message.reply_text("Привет! Выберите действие:", reply_markup=MAIN_KEYBOARD)
 
 async def help_cmd(update, context): 
-    await update.message.reply_text(
-        "/addmilk — встать в очередь на молоко\n"
-        "/addcoffee — встать в очередь на кофе\n"
-        "/removemilk — выйти из очереди на молоко\n"
-        "/removecoffee — выйти из очереди на кофе\n"
-        "/milk — показать очередь на молоко\n"
-        "/coffee — показать очередь на кофе\n",
-        reply_markup=MAIN_KEYBOARD
-    )
+    await update.message.reply_text("/addmilk /addcoffee /removemilk /removecoffee /milk /coffee")
 
 CALLBACK_MAP = {"milk_done": "milk", "coffee_done": "coffee"}
 TEXT_MAP = {
@@ -172,7 +164,7 @@ TEXT_MAP = {
 
 async def button_handler(update, context):
     kind = CALLBACK_MAP.get(update.callback_query.data)
-    if kind: 
+    if kind:
         await handle_done(update.callback_query, context, kind)
 
 async def text_button_handler(update, context):
