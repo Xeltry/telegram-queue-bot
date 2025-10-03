@@ -54,7 +54,7 @@ QUEUE_CONFIG = {
 }
 
 # ====== Администраторы ======
-ADMINS = [123456789]  # замени на свой Telegram user_id
+ADMINS = [847100761]  # замени на свой Telegram user_id
 
 def is_admin(user_id: int) -> bool:
     return user_id in ADMINS
@@ -369,3 +369,4 @@ if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
+
