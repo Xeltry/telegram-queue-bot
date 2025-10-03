@@ -155,36 +155,35 @@ async def help_cmd(update, context):
 async def add_to(update, context, kind):
     cfg, chat_id, user = QUEUE_CONFIG[kind], update.effective_chat.id, update.effective_user
     data = await get_chat(chat_id)
+
     if user.id not in [p["id"] for p in data[cfg["queue"]]]:
         mention = f"@{user.username}" if user.username else user.first_name
-        data[cfg["queue"]].append({"id": user.id, "mention": mention})
+        data[cfg["queue"]].append({"id": int(user.id), "mention": mention})
         await update_chat(chat_id, data)
-        await update.message.reply_text(f"✅ Вы добавлены в {cfg['title']}", reply_markup=MAIN_KEYBOARD)
+
         if data[cfg["msg_id"]]:
             await safe_edit(
                 context.bot, chat_id, data[cfg["msg_id"]],
                 format_queue(data[cfg["queue"]], data[cfg["index"]], cfg["title"]),
                 cfg["keyboard"]()
             )
-    else:
-        await update.message.reply_text(f"Вы уже в {cfg['title']}", reply_markup=MAIN_KEYBOARD)
 
 async def remove_from(update, context, kind):
     cfg, chat_id, user = QUEUE_CONFIG[kind], update.effective_chat.id, update.effective_user
     data = await get_chat(chat_id)
+
     before = len(data[cfg["queue"]])
     data[cfg["queue"]] = [p for p in data[cfg["queue"]] if p["id"] != user.id]
+
     if len(data[cfg["queue"]]) < before:
         await update_chat(chat_id, data)
-        await update.message.reply_text(f"❌ Вы удалены из {cfg['title']}", reply_markup=MAIN_KEYBOARD)
+
         if data[cfg["msg_id"]]:
             await safe_edit(
                 context.bot, chat_id, data[cfg["msg_id"]],
                 format_queue(data[cfg["queue"]], data[cfg["index"]], cfg["title"]),
                 cfg["keyboard"]()
             )
-    else:
-        await update.message.reply_text(f"Вас нет в {cfg['title']}", reply_markup=MAIN_KEYBOARD)
 
 async def show_queue(update, context, kind):
     cfg, chat_id = QUEUE_CONFIG[kind], update.effective_chat.id
@@ -209,9 +208,11 @@ async def advance_queue_from_text(update, context, kind):
     if user.id != current["id"]:
         return
 
+    # сдвигаем очередь
     data[cfg["index"]] = (data[cfg["index"]] + 1) % len(data[cfg["queue"]])
     await update_chat(chat_id, data)
 
+    # обновляем сообщение с очередью
     if data[cfg["msg_id"]]:
         await safe_edit(
             context.bot, chat_id, data[cfg["msg_id"]],
@@ -219,6 +220,7 @@ async def advance_queue_from_text(update, context, kind):
             cfg["keyboard"]()
         )
 
+    # отправляем только фразу из списка
     next_user = data[cfg["queue"]][data[cfg["index"]]]
     doer = f"@{user.username}" if user.username else user.first_name
     phrase = random.choice(cfg["phrases"]) if cfg["phrases"] else "{doer} сделал дело, теперь {next}!"
@@ -234,10 +236,8 @@ async def coffee_done_from_button(update, context):
 # ====== Админ-команды ======
 async def admin_add(update, context, kind):
     if not is_admin(update.effective_user.id):
-        await update.message.reply_text("⛔ У вас нет прав для этой команды")
         return
     if not context.args:
-        await update.message.reply_text("Укажите @username или user_id")
         return
 
     target = context.args[0]
@@ -252,28 +252,22 @@ async def admin_add(update, context, kind):
             user_id = int(target)
             mention = f"id:{user_id}"
     except Exception:
-        await update.message.reply_text("Неверный формат аргумента")
         return
 
-    if user_id not in [str(p["id"]) for p in data[QUEUE_CONFIG[kind]["queue"]]]:
-        data[QUEUE_CONFIG[kind]["queue"]].append({"id": str(user_id), "mention": mention})
+    if int(user_id) not in [p["id"] for p in data[QUEUE_CONFIG[kind]["queue"]]]:
+        data[QUEUE_CONFIG[kind]["queue"]].append({"id": int(user_id), "mention": mention})
         await update_chat(chat_id, data)
-        await update.message.reply_text(f"✅ {mention} добавлен(а) в {QUEUE_CONFIG[kind]['title']}")
         if data[QUEUE_CONFIG[kind]["msg_id"]]:
             await safe_edit(
-                context.bot, chat_id, data[cfg["msg_id"]],
-                format_queue(data[cfg["queue"]], data[cfg["index"]], cfg["title"]),
-                cfg["keyboard"]()
+                context.bot, chat_id, data[QUEUE_CONFIG[kind]["msg_id"]],
+                format_queue(data[QUEUE_CONFIG[kind]["queue"]], data[QUEUE_CONFIG[kind]["index"]], QUEUE_CONFIG[kind]["title"]),
+                QUEUE_CONFIG[kind]["keyboard"]()
             )
-    else:
-        await update.message.reply_text(f"{mention} уже в {QUEUE_CONFIG[kind]['title']}")
 
 async def admin_remove(update, context, kind):
     if not is_admin(update.effective_user.id):
-        await update.message.reply_text("⛔ У вас нет прав для этой команды")
         return
     if not context.args:
-        await update.message.reply_text("Укажите @username или user_id")
         return
 
     target = context.args[0]
@@ -288,15 +282,12 @@ async def admin_remove(update, context, kind):
 
     if len(data[QUEUE_CONFIG[kind]["queue"]]) < before:
         await update_chat(chat_id, data)
-        await update.message.reply_text(f"❌ {target} удалён(а) из {QUEUE_CONFIG[kind]['title']}")
         if data[QUEUE_CONFIG[kind]["msg_id"]]:
             await safe_edit(
-                context.bot, chat_id, data[cfg["msg_id"]],
-                format_queue(data[cfg["queue"]], data[cfg["index"]], cfg["title"]),
-                cfg["keyboard"]()
+                context.bot, chat_id, data[QUEUE_CONFIG[kind]["msg_id"]],
+                format_queue(data[QUEUE_CONFIG[kind]["queue"]], data[QUEUE_CONFIG[kind]["index"]], QUEUE_CONFIG[kind]["title"]),
+                QUEUE_CONFIG[kind]["keyboard"]()
             )
-    else:
-        await update.message.reply_text(f"{target} не найден(а) в {QUEUE_CONFIG[kind]['title']}")
 
 # ====== FastAPI + Telegram Application ======
 app = FastAPI()
@@ -369,4 +360,3 @@ if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
-
