@@ -1,7 +1,7 @@
 import os, json, random, logging, asyncio
 import pytz
 from fastapi import FastAPI, Request, HTTPException
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, BotCommand
 from telegram.constants import ParseMode
 from telegram.error import BadRequest
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters
@@ -21,10 +21,12 @@ DATA_FILE, PHRASES_FILE = "queues.json", "phrases.json"
 MINSK_TZ  = pytz.timezone("Europe/Minsk")
 file_lock = asyncio.Lock()
 
-# ====== Клавиатура ======
+# ====== Главное меню (закреплённое) ======
 MAIN_KEYBOARD = ReplyKeyboardMarkup(
     [["Купил(а) 🥛", "Почистил(а) ☕"]],
-    resize_keyboard=True
+    resize_keyboard=True,
+    one_time_keyboard=False,
+    input_field_placeholder="Выберите действие…"
 )
 
 def milk_keyboard():
@@ -51,17 +53,25 @@ QUEUE_CONFIG = {
     }
 }
 
+# ====== Администраторы ======
+ADMINS = [847100761]  # замени на свой Telegram user_id
+
+def is_admin(user_id: int) -> bool:
+    return user_id in ADMINS
+
 # ====== Работа с файлами ======
 def _sync_load():
     if os.path.exists(DATA_FILE):
         try:
-            return json.load(open(DATA_FILE, encoding="utf-8"))
+            with open(DATA_FILE, encoding="utf-8") as f:
+                return json.load(f)
         except json.JSONDecodeError:
             logger.warning("JSON повреждён")
     return {}
 
 def _sync_save(data):
-    json.dump(data, open(DATA_FILE, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+    with open(DATA_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
 
 async def load():
     return await asyncio.to_thread(_sync_load)
@@ -103,11 +113,14 @@ async def safe_edit(bot, chat_id, msg_id, text, kb):
 def format_queue(queue, index, title):
     if not queue:
         return f"<b>{title}</b>\n— очередь пуста."
-    lines = [f"<b>{title}</b>"]
+    lines = [f"<b>{title}</b> ({len(queue)} чел.)\n"]
     for off in range(len(queue)):
         i = (index + off) % len(queue)
-        marker = " ← сейчас" if off == 0 else ""
-        lines.append(f"{off+1}. {queue[i]['mention']}{marker}")
+        user = queue[i]["mention"]
+        if off == 0:
+            lines.append(f"👉 <b>{user}</b> — сейчас")
+        else:
+            lines.append(f"{off+1}. {user}")
     return "\n".join(lines)
 
 # ====== Действия ======
@@ -150,7 +163,8 @@ async def show_queue(update, context, kind):
     data = await get_chat(chat_id)
     msg = await update.message.reply_text(
         format_queue(data[cfg["queue"]], data[cfg["index"]], cfg["title"]),
-        reply_markup=MAIN_KEYBOARD
+        reply_markup=MAIN_KEYBOARD,
+        parse_mode=ParseMode.HTML
     )
     data[cfg["msg_id"]] = msg.message_id
     await update_chat(chat_id, data)
@@ -162,12 +176,9 @@ async def advance_queue_from_text(update, context, kind):
 
     data = await get_chat(chat_id)
     if not data[cfg["queue"]]:
-        await update.message.reply_text("Очередь пуста.", reply_markup=MAIN_KEYBOARD)
         return
-
     current = data[cfg["queue"]][data[cfg["index"]]]
     if user.id != current["id"]:
-        await update.message.reply_text("Сейчас не ваша очередь!", reply_markup=MAIN_KEYBOARD)
         return
 
     data[cfg["index"]] = (data[cfg["index"]] + 1) % len(data[cfg["queue"]])
@@ -182,7 +193,8 @@ async def advance_queue_from_text(update, context, kind):
 
     next_user = data[cfg["queue"]][data[cfg["index"]]]
     doer = f"@{user.username}" if user.username else user.first_name
-    phrase = random.choice(cfg["phrases"]).format(doer=doer, next=next_user["mention"])
+    phrase = random.choice(cfg["phrases"]) if cfg["phrases"] else "{doer} сделал дело, теперь {next}!"
+    phrase = phrase.format(doer=doer, next=f"<b>{next_user['mention']}</b>")
     await context.bot.send_message(chat_id, phrase, parse_mode=ParseMode.HTML, reply_markup=MAIN_KEYBOARD)
 
 async def milk_done_from_button(update, context):
@@ -191,50 +203,100 @@ async def milk_done_from_button(update, context):
 async def coffee_done_from_button(update, context):
     await advance_queue_from_text(update, context, "coffee")
 
-# ====== Handlers ======
-async def start(update, context):
-    await update.message.reply_text("Привет! Выберите действие:", reply_markup=MAIN_KEYBOARD)
+# ====== Админ-команды ======
+async def admin_add(update, context, kind):
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("⛔ У вас нет прав для этой команды")
+        return
 
-async def help_cmd(update, context):
+    if not context.args:
+        await update.message.reply_text("Укажите @username или user_id")
+        return
+
+    target = context.args[0]
+    chat_id = update.effective_chat.id
+    data = await get_chat(chat_id)
+
+    try:
+        if target.startswith("@"):
+            mention = target
+            user_id = target.lower()
+        else:
+            user_id = int(target)
+            mention = f"id:{user_id}"
+    except Exception:
+        await update.message.reply_text("Неверный формат аргумента")
+        return
+
+    if user_id not in [str(p["id"]) for p in data[QUEUE_CONFIG[kind]["queue"]]]:
+        data[QUEUE_CONFIG[kind]["queue"]].append({"id": str(user_id), "mention": mention})
+        await update_chat(chat_id, data)
+        await update.message.reply_text(f"✅ {mention} добавлен(а) в {QUEUE_CONFIG[kind]['title']}")
+        if data[QUEUE_CONFIG[kind]["msg_id"]]:
+            await safe_edit(
+                context.bot, chat_id, data[cfg["msg_id"]],
+                format_queue(data[cfg["queue"]], data[cfg["index"]], cfg["title"]),
+                cfg["keyboard"]()
+            )
+    else:
+        await update.message.reply_text(f"{mention} уже в {QUEUE_CONFIG[kind]['title']}")
+
+async def admin_remove(update, context, kind):
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("⛔ У вас нет прав для этой команды")
+        return
+
+    if not context.args:
+        await update.message.reply_text("Укажите @username или user_id")
+        return
+
+    target = context.args[0]
+    chat_id = update.effective_chat.id
+    data = await get_chat(chat_id)
+
+    before = len(data[QUEUE_CONFIG[kind]["queue"]])
+    data[QUEUE_CONFIG[kind]["queue"]] = [
+        p for p in data[QUEUE_CONFIG[kind]["queue"]]
+        if p["mention"] != target and str(p["id"]) != target
+    ]
+
+    if len(data[QUEUE_CONFIG[kind]["queue"]]) < before:
+        await update_chat(chat_id, data)
+        await update.message.reply_text(f"❌ {target} удалён(а) из {QUEUE_CONFIG[kind]['title']}")
+        if data[QUEUE_CONFIG[kind]["msg_id"]]:
+            await safe_edit(
+                context.bot, chat_id, data[cfg["msg_id"]],
+                format_queue(data[cfg["queue"]], data[cfg["index"]], cfg["title"]),
+                cfg["keyboard"]()
+            )
+    else:
+        await update.message.reply_text(f"{target} не найден(а) в {QUEUE_CONFIG[kind]['title']}")
+        async def help_cmd(update, context):
     help_text = (
         "<b>Доступные команды:</b>\n\n"
-        "/start – запустить бота и показать клавиатуру\n"
-        "/help – показать это сообщение\n\n"
-        "/addmilk – добавить себя в 🥛 очередь\n"
-        "/addcoffee – добавить себя в ☕ очередь\n"
-        "/removemilk – выйти из 🥛 очереди\n"
-        "/removecoffee – выйти из ☕ очереди\n"
-        "/milk – показать 🥛 очередь\n"
-        "/coffee – показать ☕ очередь\n\n"
-        "<b>Кнопки в клавиатуре:</b>\n"
+        "— /start – запустить бота и показать меню\n"
+        "— /help – показать это сообщение\n\n"
+        "— /addmilk – добавить себя в 🥛 очередь\n"
+        "— /addcoffee – добавить себя в ☕ очередь\n"
+        "— /removemilk – выйти из 🥛 очереди\n"
+        "— /removecoffee – выйти из ☕ очереди\n"
+        "— /milk – показать 🥛 очередь\n"
+        "— /coffee – показать ☕ очередь\n\n"
+        "<b>Кнопки внизу:</b>\n"
         "• «Купил(а) 🥛» – двигает очередь молока вперёд (только если ваша очередь)\n"
-        "• «Почистил(а) ☕» – двигает очередь кофемашины вперёд (только если ваша очередь)\n"
+        "• «Почистил(а) ☕» – двигает очередь кофемашины вперёд (только если ваша очередь)\n\n"
+        "<b>Админ‑команды:</b>\n"
+        "— /adminaddmilk @username или user_id – добавить человека в 🥛 очередь\n"
+        "— /adminaddcoffee @username или user_id – добавить человека в ☕ очередь\n"
+        "— /adminremovemilk @username или user_id – удалить человека из 🥛 очереди\n"
+        "— /adminremovecoffee @username или user_id – удалить человека из ☕ очереди\n"
     )
-    await update.message.reply_text(help_text, parse_mode=ParseMode.HTML)
-
-# ====== Карты кнопок ======
-CALLBACK_MAP = {"milk_done": "milk", "coffee_done": "coffee"}
-TEXT_MAP = {
-    "Купил(а) 🥛": milk_done_from_button,
-    "Почистил(а) ☕": coffee_done_from_button,
-}
-
-async def button_handler(update, context):
-    kind = CALLBACK_MAP.get(update.callback_query.data)
-    if kind:
-        await handle_done(update.callback_query, context, kind)
-
-async def text_button_handler(update, context):
-    handler = TEXT_MAP.get(update.message.text)
-    if handler:
-        await handler(update, context)
-
+    await update.message.reply_text(help_text, parse_mode=ParseMode.HTML, reply_markup=MAIN_KEYBOARD)
 # ====== FastAPI + Telegram Application ======
 app = FastAPI()
-
 application = Application.builder().token(TOKEN).updater(None).build()
 
-# Регистрация команд
+# Пользовательские команды
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CommandHandler("help", help_cmd))
 application.add_handler(CommandHandler("addmilk", lambda u, c: add_to(u, c, "milk")))
@@ -244,7 +306,27 @@ application.add_handler(CommandHandler("removecoffee", lambda u, c: remove_from(
 application.add_handler(CommandHandler("milk", lambda u, c: show_queue(u, c, "milk")))
 application.add_handler(CommandHandler("coffee", lambda u, c: show_queue(u, c, "coffee")))
 
+# Админ-команды
+application.add_handler(CommandHandler("adminaddmilk", lambda u, c: admin_add(u, c, "milk")))
+application.add_handler(CommandHandler("adminaddcoffee", lambda u, c: admin_add(u, c, "coffee")))
+application.add_handler(CommandHandler("adminremovemilk", lambda u, c: admin_remove(u, c, "milk")))
+application.add_handler(CommandHandler("adminremovecoffee", lambda u, c: admin_remove(u, c, "coffee")))
+
 # Callback и текстовые кнопки
+CALLBACK_MAP = {"milk_done": "milk", "coffee_done": "coffee"}
+TEXT_MAP = {"Купил(а) 🥛": milk_done_from_button, "Почистил(а) ☕": coffee_done_from_button}
+
+async def button_handler(update, context):
+    kind = CALLBACK_MAP.get(update.callback_query.data)
+    if kind:
+        await advance_queue_from_text(update, context, kind)
+        await update.callback_query.answer()
+
+async def text_button_handler(update, context):
+    handler = TEXT_MAP.get(update.message.text)
+    if handler:
+        await handler(update, context)
+
 application.add_handler(CallbackQueryHandler(button_handler))
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_button_handler))
 
@@ -266,7 +348,7 @@ async def on_shutdown():
 async def webhook(req: Request):
     try:
         payload = await req.json()
-    except json.JSONDecodeError:
+    except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON")
     update = Update.de_json(payload, application.bot)
     await application.process_update(update)
@@ -280,4 +362,5 @@ async def health():
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", 8000))
-    uvicorn.run("bot:app", host="0.0.0.0", port=port)
+    uvicorn.run(app, host="0.0.0.0", port=port)
+
