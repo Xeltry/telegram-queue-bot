@@ -1,7 +1,7 @@
 import os, json, random, logging, asyncio
 import pytz
 from fastapi import FastAPI, Request, HTTPException
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, BotCommand
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
 from telegram.constants import ParseMode
 from telegram.error import BadRequest
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters
@@ -21,7 +21,7 @@ DATA_FILE, PHRASES_FILE = "queues.json", "phrases.json"
 MINSK_TZ  = pytz.timezone("Europe/Minsk")
 file_lock = asyncio.Lock()
 
-# ====== Главное меню (закреплённое) ======
+# ====== Главное меню (ReplyKeyboardMarkup) ======
 MAIN_KEYBOARD = ReplyKeyboardMarkup(
     [["Купил(а) 🥛", "Почистил(а) ☕"]],
     resize_keyboard=True,
@@ -54,7 +54,7 @@ QUEUE_CONFIG = {
 }
 
 # ====== Администраторы ======
-ADMINS = [847100761]  # замени на свой Telegram user_id
+ADMINS = [123456789]  # замени на свой Telegram user_id
 
 def is_admin(user_id: int) -> bool:
     return user_id in ADMINS
@@ -123,7 +123,35 @@ def format_queue(queue, index, title):
             lines.append(f"{off+1}. {user}")
     return "\n".join(lines)
 
-# ====== Действия ======
+# ====== Пользовательские действия ======
+async def start(update, context):
+    await update.message.reply_text(
+        "Привет! Это бот для очередей 🥛☕\n\nВыберите действие кнопкой ниже:",
+        reply_markup=MAIN_KEYBOARD
+    )
+
+async def help_cmd(update, context):
+    help_text = (
+        "<b>Доступные команды:</b>\n\n"
+        "— /start – запустить бота и показать меню\n"
+        "— /help – показать это сообщение\n\n"
+        "— /addmilk – добавить себя в 🥛 очередь\n"
+        "— /addcoffee – добавить себя в ☕ очередь\n"
+        "— /removemilk – выйти из 🥛 очереди\n"
+        "— /removecoffee – выйти из ☕ очереди\n"
+        "— /milk – показать 🥛 очередь\n"
+        "— /coffee – показать ☕ очередь\n\n"
+        "<b>Кнопки внизу:</b>\n"
+        "• «Купил(а) 🥛» – двигает очередь молока вперёд (только если ваша очередь)\n"
+        "• «Почистил(а) ☕» – двигает очередь кофемашины вперёд (только если ваша очередь)\n\n"
+        "<b>Админ‑команды:</b>\n"
+        "— /adminaddmilk @username или user_id – добавить человека в 🥛 очередь\n"
+        "— /adminaddcoffee @username или user_id – добавить человека в ☕ очередь\n"
+        "— /adminremovemilk @username или user_id – удалить человека из 🥛 очереди\n"
+        "— /adminremovecoffee @username или user_id – удалить человека из ☕ очереди\n"
+    )
+    await update.message.reply_text(help_text, parse_mode=ParseMode.HTML, reply_markup=MAIN_KEYBOARD)
+
 async def add_to(update, context, kind):
     cfg, chat_id, user = QUEUE_CONFIG[kind], update.effective_chat.id, update.effective_user
     data = await get_chat(chat_id)
@@ -208,7 +236,6 @@ async def admin_add(update, context, kind):
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("⛔ У вас нет прав для этой команды")
         return
-
     if not context.args:
         await update.message.reply_text("Укажите @username или user_id")
         return
@@ -245,7 +272,6 @@ async def admin_remove(update, context, kind):
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("⛔ У вас нет прав для этой команды")
         return
-
     if not context.args:
         await update.message.reply_text("Укажите @username или user_id")
         return
@@ -271,27 +297,7 @@ async def admin_remove(update, context, kind):
             )
     else:
         await update.message.reply_text(f"{target} не найден(а) в {QUEUE_CONFIG[kind]['title']}")
-async def help_cmd(update, context):
-    help_text = (
-        "<b>Доступные команды:</b>\n\n"
-        "— /start – запустить бота и показать меню\n"
-        "— /help – показать это сообщение\n\n"
-        "— /addmilk – добавить себя в 🥛 очередь\n"
-        "— /addcoffee – добавить себя в ☕ очередь\n"
-        "— /removemilk – выйти из 🥛 очереди\n"
-        "— /removecoffee – выйти из ☕ очереди\n"
-        "— /milk – показать 🥛 очередь\n"
-        "— /coffee – показать ☕ очередь\n\n"
-        "<b>Кнопки внизу:</b>\n"
-        "• «Купил(а) 🥛» – двигает очередь молока вперёд (только если ваша очередь)\n"
-        "• «Почистил(а) ☕» – двигает очередь кофемашины вперёд (только если ваша очередь)\n\n"
-        "<b>Админ‑команды:</b>\n"
-        "— /adminaddmilk @username или user_id – добавить человека в 🥛 очередь\n"
-        "— /adminaddcoffee @username или user_id – добавить человека в ☕ очередь\n"
-        "— /adminremovemilk @username или user_id – удалить человека из 🥛 очереди\n"
-        "— /adminremovecoffee @username или user_id – удалить человека из ☕ очереди\n"
-    )
-    await update.message.reply_text(help_text, parse_mode=ParseMode.HTML, reply_markup=MAIN_KEYBOARD)
+
 # ====== FastAPI + Telegram Application ======
 app = FastAPI()
 application = Application.builder().token(TOKEN).updater(None).build()
@@ -363,5 +369,3 @@ if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
-
-
