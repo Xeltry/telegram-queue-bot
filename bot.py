@@ -271,7 +271,7 @@ async def admin_remove(update, context, kind):
             )
     else:
         await update.message.reply_text(f"{target} не найден(а) в {QUEUE_CONFIG[kind]['title']}")
-        async def help_cmd(update, context):
+async def help_cmd(update, context):
     help_text = (
         "<b>Доступные команды:</b>\n\n"
         "— /start – запустить бота и показать меню\n"
@@ -363,4 +363,5 @@ if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
+
 
